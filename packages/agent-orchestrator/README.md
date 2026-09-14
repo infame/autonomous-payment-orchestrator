@@ -18,17 +18,19 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-2 of 9
+## Status: steps 1-3 of 9
 
-This package currently contains **only the domain aggregate and the
-deterministic policy layer** — steps 1-2 of the spec's own implementation
-order (§14):
+This package currently contains the domain aggregate, the deterministic
+policy layer, and the `LlmClient` port with its mock adapter — steps 1-3 of
+the spec's own implementation order (§14):
 
-1. **`src/domain/` (this step)** — `Intent` (the state machine) and
-   `AgentProposal` (the LLM's structured output shape). No I/O.
-2. **`src/policy/` (this step)** — pure guardrail functions:
+1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
+   LLM's structured output shape). No I/O.
+2. **`src/policy/`** — pure guardrail functions:
    `evaluatePolicy(proposal, context) → PolicyVerdict`. No LLM, no HTTP.
-3. `ports/llm-client.ts` + a directive-driven `MockLlmClient`.
+3. **`src/ports/llm-client.ts` + `src/adapters/llm/` (this step)** — the
+   `LlmClient` port and a directive-driven `MockLlmClient` adapter. No real
+   vendor call, no HTTP.
 4. `ports/agent-core-client.ts` + a typed HTTP client to `durable-ledger`.
 5. `ports/intent-repository.ts` + Postgres (Drizzle) and in-memory adapters.
 6. `app/*` use-cases wiring domain, policy, LLM port, and repository together.
@@ -36,8 +38,8 @@ order (§14):
 8. A thin Hono HTTP layer + composition root + config + `main.ts`.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-None of steps 3-9 exist yet — no LLM port or adapter, no `durable-ledger`
-client, no repository, no HTTP, no composition root.
+None of steps 4-9 exist yet — no `durable-ledger` client, no repository, no
+use-cases, no HTTP, no composition root.
 
 ## The domain model
 
@@ -94,6 +96,43 @@ pure text parsing with no domain dependency; `rules.ts` composes the two;
 union with a separate `detail: string`, not a bare `string` — a stronger
 reading of the spec's own requirement for an "explicit reason code."
 
+## `LlmClient` and `MockLlmClient`
+
+`src/ports/llm-client.ts` is the outbound port to whatever turns intent text
+into an `AgentProposal` — a real vendor model (step 7) or `MockLlmClient`
+(`src/adapters/llm/mock-llm-client.ts`, this step). `reason()` either
+resolves with an already-domain-valid `AgentProposal` (built through
+`paymentProposal`/`clarifyProposal`/`declineProposal`, never a raw object
+literal) or rejects with an `LlmClientError` subclass — see the port file's
+header for the full contract, including why `clarificationAnswer` is
+`string | null` rather than the spec's `?: string` sketch.
+
+`MockLlmClient` is steered by a small directive grammar
+(`src/adapters/llm/directives.ts`) scanned out of `intentText`/
+`clarificationAnswer`:
+
+| Directive | Effect |
+|---|---|
+| `sim.unavailable` | Rejects with `LlmUnavailableError` |
+| `sim.decline` / `sim.decline.<slug>` | Declines; default slug `unsupported_request` |
+| `sim.clarify` / `sim.clarify.<slug>` | Asks for clarification (first pass only); default slug `amount` |
+| `sim.amount.min` | Proposes the minimum amount found in the text |
+| `sim.amount.max` | Proposes the maximum amount found in the text |
+| `sim.amount.ungrounded` | Proposes an amount NOT found in the text (the adversarial case) |
+| `sim.currency.<CODE>` | Sets the proposed currency (`[A-Z]{3}`, else ignored) |
+| `sim.merchant.<id>` | Sets the proposed merchant id (`[A-Za-z0-9_-]{1,64}`, else ignored) |
+
+The grammar is deliberately **digit-free**: `sim.amount.*` never encodes a
+literal amount, it only *selects* among amounts `policy/grounding.ts`'s
+`extractGroundedAmounts` already finds in the real text. Unlike `pay-core`'s
+`SimulatorProvider`, whose directives ride inside an opaque carrier string
+nothing else reads as data, `intentText` here is genuinely parsed by the
+policy layer's own grounding rule — a directive that could smuggle in an
+arbitrary amount would let the mock produce proposals the guardrail this
+package exists to exercise would never actually allow through. Undirected
+text falls back to proposing the minimum candidate amount (spec §3.3's
+safe-interpretation rule) when one exists, or declining when it doesn't.
+
 ## Why there's no `pay-core` client at all
 
 This package only ever talks to `durable-ledger` (and only over HTTP, once
@@ -134,7 +173,7 @@ Requires Node 24+ and pnpm.
 
 - [x] Domain: `Intent` state machine, `AgentProposal`
 - [x] Policy: pure guardrail rules + `evaluatePolicy`
-- [ ] `LlmClient` port + `MockLlmClient`
+- [x] `LlmClient` port + `MockLlmClient`
 - [ ] `AgentCoreClient` port + `durable-ledger` HTTP client
 - [ ] `IntentRepository` port + Postgres/in-memory adapters
 - [ ] `app/*` use-cases
