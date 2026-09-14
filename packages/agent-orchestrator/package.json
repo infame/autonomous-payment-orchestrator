@@ -1,0 +1,22 @@
+{
+  "name": "@apo/agent-orchestrator",
+  "version": "0.1.0",
+  "description": "LLM intent orchestration with a deterministic policy layer; proposes payments, never executes them.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "eslint": "^9.19.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
