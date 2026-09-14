@@ -18,28 +18,87 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-3 of 9
+## Status: steps 1-4 of 9
 
 This package currently contains the domain aggregate, the deterministic
-policy layer, and the `LlmClient` port with its mock adapter — steps 1-3 of
+policy layer, the `LlmClient` port with its mock adapter, and the
+`AgentCoreClient` port with its `durable-ledger` HTTP client — steps 1-4 of
 the spec's own implementation order (§14):
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
 2. **`src/policy/`** — pure guardrail functions:
    `evaluatePolicy(proposal, context) → PolicyVerdict`. No LLM, no HTTP.
-3. **`src/ports/llm-client.ts` + `src/adapters/llm/` (this step)** — the
-   `LlmClient` port and a directive-driven `MockLlmClient` adapter. No real
-   vendor call, no HTTP.
-4. `ports/agent-core-client.ts` + a typed HTTP client to `durable-ledger`.
+3. **`src/ports/llm-client.ts` + `src/adapters/llm/`** — the `LlmClient`
+   port and a directive-driven `MockLlmClient` adapter. No real vendor call,
+   no HTTP.
+4. **`src/ports/agent-core-client.ts` + `src/adapters/http/durable-ledger-client.ts`
+   (this step)** — the `AgentCoreClient` port and `HttpDurableLedgerClient`,
+   a typed HTTP client to `durable-ledger`'s `POST /workflows/payment` and
+   `GET /workflows/:eventId`. See below for what this step is and isn't.
 5. `ports/intent-repository.ts` + Postgres (Drizzle) and in-memory adapters.
 6. `app/*` use-cases wiring domain, policy, LLM port, and repository together.
 7. `adapters/llm/anthropic-llm-client.ts` — the real, live LLM adapter.
 8. A thin Hono HTTP layer + composition root + config + `main.ts`.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-None of steps 4-9 exist yet — no `durable-ledger` client, no repository, no
-use-cases, no HTTP, no composition root.
+None of steps 5-9 exist yet — no repository, no use-cases, no HTTP layer of
+this package's own, no composition root.
+
+## `AgentCoreClient` and `HttpDurableLedgerClient`
+
+`src/ports/agent-core-client.ts` is the outbound port to `durable-ledger` —
+the only system this package ever asks to actually move money (see "Why
+there's no `pay-core` client at all" below). `HttpDurableLedgerClient`
+(`src/adapters/http/durable-ledger-client.ts`) is its only implementation so
+far, structurally mirroring `durable-ledger`'s own `HttpPayCoreClient`
+(global `fetch`, `AbortSignal.timeout` combined with a caller signal via
+`AbortSignal.any`, one private `request<T>()` helper, zod-validated
+responses, a pure `agentCoreErrorFor` classifier). Its test double,
+`src/adapters/http/fake-durable-ledger-server.ts`, is a real `node:http`
+server transcribed from `durable-ledger`'s actual routes — test support
+only, not exported — for the same reasons ADR-0006 gives for pay-core's
+equivalent fake.
+
+Four things worth knowing about the shape of this port:
+
+- **The `paymentMethodToken` is a caller-supplied argument, never something
+  the LLM proposes.** `PaymentProposal` has no such field; `paymentWorkflow
+  RequestFor` takes it as a sibling parameter, sourced from configuration in
+  a later step. It doubles as the wire carrier for `pay-core`'s
+  `SimulatorProvider` directive grammar (`sim.ok`, `sim.decline.<code>`,
+  `sim.fail_then_succeed.<n>`, `sim.timeout`), which is the only way this
+  project's headline demo scenario — a simulated 503 followed by a durable
+  retry — stays reachable. See
+  [ADR-0012](../../docs/adr/0012-payment-method-token-is-supplied-not-proposed.md).
+- **`Intent.customerId` has no destination on the wire.** durable-ledger's
+  `paymentExecuteRequestedSchema` has no `customerId` field, and
+  `PostingGroup.forCapture` only ever posts between `acquirer_clearing` and
+  `merchant:<id>` — there is no customer-side ledger account for it to
+  reach. `customerId` stays a local field on this package's side of the
+  boundary.
+- **The client is stateless: no de-duplication, no polling.** It performs no
+  caching of its own — `Intent.autoApprove`/`Intent.approve`
+  (`domain/intent.ts`) already require a `durableLedgerEventId` before
+  allowing the transition to `executing`, and that is where this project's
+  exactly-once guarantee against durable-ledger's un-idempotent
+  `POST /workflows/payment` actually lives. There is also no blocking
+  `waitForCompletion` method: `getRunStatus` is a single HTTP call, matching
+  spec §7's requirement that `POST /intents` must not block until a workflow
+  finishes.
+- **A bare 404 is not the same as "run not found."** `agentCoreErrorFor`
+  deliberately diverges from durable-ledger's own `payCoreErrorFor` (which
+  maps every 404 to "not found"): only a 404 on `GET /workflows/:eventId`
+  carrying `workflow_run_not_found` becomes `AgentCoreRunNotFoundError`. A
+  bare `not_found`, or any 404 on `POST /workflows/payment` (a route that
+  can never legitimately 404), becomes `AgentCoreUnexpectedResponseError`
+  instead — collapsing those into "run not found" would disguise a
+  base-URL misconfiguration as a domain outcome.
+
+Not built in this step, by design (decision C of the plan this step came
+from): a `FakeAgentCoreClient` in-process port double. This step's own tests
+are covered by the HTTP fake server; an in-process double is a future
+use-case step's job, once there's a use-case to test against it.
 
 ## The domain model
 
@@ -174,7 +233,7 @@ Requires Node 24+ and pnpm.
 - [x] Domain: `Intent` state machine, `AgentProposal`
 - [x] Policy: pure guardrail rules + `evaluatePolicy`
 - [x] `LlmClient` port + `MockLlmClient`
-- [ ] `AgentCoreClient` port + `durable-ledger` HTTP client
+- [x] `AgentCoreClient` port + `durable-ledger` HTTP client
 - [ ] `IntentRepository` port + Postgres/in-memory adapters
 - [ ] `app/*` use-cases
 - [ ] `AnthropicLlmClient` (live)

@@ -10,10 +10,9 @@
  * the public demo (spec §5), not test-only infrastructure, matching how
  * `pay-core` exports `SimulatorProvider`.
  *
- * Not exported, because they don't exist yet: `ports/agent-core-client.ts`,
- * `ports/intent-repository.ts` (step 4-5), `app/*` use-cases (step 6),
- * `adapters/llm/anthropic-llm-client.ts`, `durable-ledger` HTTP client,
- * Postgres/in-memory repositories (steps 4-7), `composition-root.ts`,
+ * Not exported, because they don't exist yet: `ports/intent-repository.ts`
+ * (step 5), `app/*` use-cases (step 6), `adapters/llm/anthropic-llm-client.ts`,
+ * Postgres/in-memory repositories (steps 5/7), `composition-root.ts`,
  * `config.ts`, `main.ts` (step 8).
  */
 
@@ -30,9 +29,11 @@ export * from "./policy/evaluate-policy.js";
 
 // Ports
 export * from "./ports/llm-client.js";
+export * from "./ports/agent-core-client.js";
 
 // Use-cases
 
 // Adapters
 export * from "./adapters/llm/directives.js";
 export * from "./adapters/llm/mock-llm-client.js";
+export * from "./adapters/http/durable-ledger-client.js";
