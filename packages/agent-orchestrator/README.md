@@ -18,13 +18,14 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-5 of 9
+## Status: steps 1-5 of 9, plus the first slice of step 6
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
 `AgentCoreClient` port with its `durable-ledger` HTTP client, and the
 `IntentRepository` port with its Postgres and in-memory adapters — steps
-1-5 of the spec's own implementation order (§14):
+1-5 of the spec's own implementation order (§14) — plus `SubmitIntent` and
+`GetIntent`, the first two of step 6's five `app/*` use-cases:
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -41,13 +42,37 @@ policy layer, the `LlmClient` port with its mock adapter, the
    + `src/adapters/memory/` (this step)** — the `IntentRepository` port,
    its own `agent` Postgres schema/migration, `PgIntentRepository`, and
    `InMemoryIntentRepository`. See "Persistence & concurrency" below.
-6. `app/*` use-cases wiring domain, policy, LLM port, and repository together.
+6. `app/*` use-cases wiring domain, policy, LLM port, and repository
+   together. **`SubmitIntent` and `GetIntent` exist (this step, first
+   slice)** — see below. `AnswerClarification`, `ApproveIntent`, and
+   `RejectIntent` do not yet.
 7. `adapters/llm/anthropic-llm-client.ts` — the real, live LLM adapter.
 8. A thin Hono HTTP layer + composition root + config + `main.ts`.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-None of steps 6-9 exist yet — no use-cases, no HTTP layer of this package's
-own, no composition root.
+Steps 7-9, and the rest of step 6, don't exist yet — no HTTP layer of this
+package's own, no composition root, no `AgentCoreClient` wiring into any
+use-case.
+
+### `SubmitIntent` and `GetIntent` (step 6, first slice)
+
+`SubmitIntent` (`src/app/submit-intent.ts`) creates a new `Intent` from raw
+text + a customer id, asks the `LlmClient` to reason about it once, and —
+when the agent proposes a payment — runs `evaluatePolicy` against it. It
+performs exactly one repository write (`IntentRepository.create`) and can
+leave the persisted `Intent` in exactly four statuses:
+`needs_clarification`, `proposed`, `needs_approval`, or `rejected`.
+`executing` is **not** reachable from this use-case — that requires a
+`durableLedgerEventId`, which only a future `ApproveIntent` (calling
+`AgentCoreClient`) can produce. A policy "allow" decision is surfaced to
+the immediate caller (`SubmitIntentResult.verdict`) but deliberately **not**
+persisted onto the intent: the daily-rate-limit rule is time-dependent, so
+a stored "allow" from submission time would be stale by the time a future
+use-case actually claims and executes it — policy has to be re-evaluated
+then regardless. `GetIntent` (`src/app/get-intent.ts`) is a straight
+`findById` → `IntentNotFoundError` on miss → read-only `IntentView`;
+it does not yet scope by caller/customer (deferred to the future HTTP/auth
+layer, same as `durable-ledger`'s equivalent gaps were at this stage).
 
 ## `AgentCoreClient` and `HttpDurableLedgerClient`
 
@@ -291,7 +316,8 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `LlmClient` port + `MockLlmClient`
 - [x] `AgentCoreClient` port + `durable-ledger` HTTP client
 - [x] `IntentRepository` port + Postgres/in-memory adapters
-- [ ] `app/*` use-cases
+- [x] `app/*`: `SubmitIntent`, `GetIntent`
+- [ ] `app/*`: `AnswerClarification`, `ApproveIntent`, `RejectIntent`
 - [ ] `AnthropicLlmClient` (live)
 - [ ] Hono HTTP layer + composition root + config + `main.ts`
 - [ ] End-to-end demo scenario

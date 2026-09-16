@@ -17,6 +17,11 @@ Caveats to carry into future reviews:
   `prettier --write` on each edited file, so any edit to an unformatted file
   drags unrelated reformatting into the diff. Expect this churn and don't
   mistake it for intentional change; suggest a one-shot repo-wide format.
+- Markdown is in that unformatted set: `packages/agent-orchestrator/README.md`
+  fails `prettier --check` **already on `main`** (2026-09-16). Don't flag
+  prettier deltas in a README-only diff — diff the file against its own
+  `prettier` output and check whether the offending hunks predate the branch
+  before calling formatting a finding.
 - `eslint`/`prettier`/`typescript-eslint` are declared **only** in the root
   `package.json`, yet consumed by a package-level script. It resolves because
   pnpm puts the workspace-root `.bin` on PATH — fragile if a package is ever
