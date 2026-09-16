@@ -101,7 +101,7 @@ export function isIntentStatus(value: string): value is IntentStatus {
 export const MAX_INTENT_TEXT_LENGTH = 10_000;
 
 /** Same shape as `durable-ledger`'s account-subject ids: a reasonable, bounded id, not free text. */
-const CUSTOMER_ID = /^[A-Za-z0-9_-]{1,128}$/;
+export const CUSTOMER_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 export interface IntentProps {
   readonly id: string;
@@ -130,9 +130,9 @@ export class Intent {
     if (params.id.trim().length === 0) {
       throw new InvalidIntentError("id must not be empty");
     }
-    if (!CUSTOMER_ID.test(params.customerId)) {
+    if (!CUSTOMER_ID_PATTERN.test(params.customerId)) {
       throw new InvalidIntentError(
-        `customerId must match ${CUSTOMER_ID.toString()}, got ${JSON.stringify(params.customerId)}`,
+        `customerId must match ${CUSTOMER_ID_PATTERN.toString()}, got ${JSON.stringify(params.customerId)}`,
       );
     }
     const trimmedText = params.text.trim();

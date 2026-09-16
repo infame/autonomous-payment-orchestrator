@@ -2,3 +2,4 @@
 - [Lint is wired, prettier is not enforced](repo-lint-not-wired.md) — eslint flat config is real now; prettier has no config/check script, so edits drag reformat churn into diffs.
 - [Reviewing the trunk gate hook](hook-gate-review-heuristic.md) — real gate is now .githooks/reference-transaction (a git hook, not text-matching); guard-commit.sh is just the --no-verify/--force check.
 - [Run the DB suites, do not just read them](verify-db-claims-by-running.md) — Postgres is usually up on :5433; probe "returns what was stored" adapter claims by running.
+- [JSDoc headers are the contract of record](doc-headers-are-load-bearing.md) — check every "always/never/null when" claim against code+tests; incl. the no-free-text-in-errors rule.
