@@ -40,3 +40,22 @@ export type PolicyVerdict = AllowVerdict | NeedsApprovalVerdict | RejectVerdict;
 
 /** The two verdict shapes that carry an objection — everything but `allow`. */
 export type PolicyObjection = NeedsApprovalVerdict | RejectVerdict;
+
+/**
+ * Every `PolicyReasonCode`, transcribed from `policy/rules.ts`'s verdicts
+ * (`currencyAllowed`, `amountMustBeGrounded`, `maxHardLimit`,
+ * `dailyRateLimit`, `maxAutoApprove`). Kept here, not derived by importing
+ * `rules.ts`, so this file stays import-free (see the header comment above).
+ */
+export const POLICY_REASON_CODES: readonly PolicyReasonCode[] = [
+  "currency_not_allowed",
+  "amount_not_grounded",
+  "hard_limit_exceeded",
+  "daily_rate_limit_exceeded",
+  "above_auto_approve_threshold",
+];
+
+/** Narrows a value read back from storage (or the wire) to `PolicyReasonCode`. */
+export function isPolicyReasonCode(value: string): value is PolicyReasonCode {
+  return (POLICY_REASON_CODES as readonly string[]).includes(value);
+}

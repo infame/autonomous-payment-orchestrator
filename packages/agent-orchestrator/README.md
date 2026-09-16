@@ -18,12 +18,13 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-4 of 9
+## Status: steps 1-5 of 9
 
 This package currently contains the domain aggregate, the deterministic
-policy layer, the `LlmClient` port with its mock adapter, and the
-`AgentCoreClient` port with its `durable-ledger` HTTP client — steps 1-4 of
-the spec's own implementation order (§14):
+policy layer, the `LlmClient` port with its mock adapter, the
+`AgentCoreClient` port with its `durable-ledger` HTTP client, and the
+`IntentRepository` port with its Postgres and in-memory adapters — steps
+1-5 of the spec's own implementation order (§14):
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -32,18 +33,21 @@ the spec's own implementation order (§14):
 3. **`src/ports/llm-client.ts` + `src/adapters/llm/`** — the `LlmClient`
    port and a directive-driven `MockLlmClient` adapter. No real vendor call,
    no HTTP.
-4. **`src/ports/agent-core-client.ts` + `src/adapters/http/durable-ledger-client.ts`
-   (this step)** — the `AgentCoreClient` port and `HttpDurableLedgerClient`,
+4. **`src/ports/agent-core-client.ts` + `src/adapters/http/durable-ledger-client.ts`**
+   — the `AgentCoreClient` port and `HttpDurableLedgerClient`,
    a typed HTTP client to `durable-ledger`'s `POST /workflows/payment` and
    `GET /workflows/:eventId`. See below for what this step is and isn't.
-5. `ports/intent-repository.ts` + Postgres (Drizzle) and in-memory adapters.
+5. **`src/ports/intent-repository.ts` + `src/adapters/persistence/drizzle/`
+   + `src/adapters/memory/` (this step)** — the `IntentRepository` port,
+   its own `agent` Postgres schema/migration, `PgIntentRepository`, and
+   `InMemoryIntentRepository`. See "Persistence & concurrency" below.
 6. `app/*` use-cases wiring domain, policy, LLM port, and repository together.
 7. `adapters/llm/anthropic-llm-client.ts` — the real, live LLM adapter.
 8. A thin Hono HTTP layer + composition root + config + `main.ts`.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-None of steps 5-9 exist yet — no repository, no use-cases, no HTTP layer of
-this package's own, no composition root.
+None of steps 6-9 exist yet — no use-cases, no HTTP layer of this package's
+own, no composition root.
 
 ## `AgentCoreClient` and `HttpDurableLedgerClient`
 
@@ -192,6 +196,47 @@ package exists to exercise would never actually allow through. Undirected
 text falls back to proposing the minimum candidate amount (spec §3.3's
 safe-interpretation rule) when one exists, or declining when it doesn't.
 
+## Persistence & concurrency
+
+`src/ports/intent-repository.ts` is the outbound persistence port for
+`Intent`. `PgIntentRepository` (`src/adapters/persistence/drizzle/`) and
+`InMemoryIntentRepository` (`src/adapters/memory/`) are its two
+implementations; the in-memory one enforces the exact same locking
+semantics as Postgres, unlike `@apo/pay-core`'s `InMemoryPaymentRepository`,
+which has none.
+
+- **Optimistic locking, not `SELECT ... FOR UPDATE`.** Every `Intent`
+  mutation this package will eventually drive (LLM call → policy
+  evaluation → possibly a `durable-ledger` call) can take an unpredictably
+  long time — an LLM round-trip in particular. A row lock held across that
+  window would pin a pooled Postgres connection for the duration, which
+  under load would exhaust the pool for every other request. Optimistic
+  locking (`UPDATE ... WHERE id = $1 AND version = $2`, throwing
+  `IntentVersionConflictError` on zero rows) only pays a cost on a genuine
+  write-write race, which is rare for a single intent. Same precedent as
+  `pay-core`'s `PgPaymentRepository` — see its README's own
+  "Persistence & concurrency" section.
+- **`version` lives at the persistence boundary, not on `Intent`.** Unlike
+  `pay-core`'s `PgPaymentRepository`, which tracks the lock version in a
+  `WeakMap<Payment, number>` keyed by aggregate instance (a workaround for
+  a `save(payment)` signature that predates having anywhere else to put
+  it), this port was designed from scratch: `StoredIntent.version` and
+  `IntentRepository.update(intent, expectedVersion)` carry it explicitly.
+  That gets every implementation — Postgres AND in-memory — real locking
+  for free, with no hidden per-instance state. See
+  `ports/intent-repository.ts`'s header for the full rationale, including
+  why the version check alone is not sufficient for durable-ledger's
+  exactly-once guarantee (spec §6) — a future use-case must claim the
+  intent before calling out, not after.
+- **`agent` is its own Postgres schema**, not `public` (pay-core's) or
+  `ledger` (durable-ledger's) — this is the third package sharing one
+  Postgres instance (`docker-compose.yml`). Its own schema gives namespace
+  isolation (no table-name collisions across packages when any one
+  introspects the shared instance) and migration-journal isolation
+  (`agent.__drizzle_migrations` is separate from the other two packages',
+  so applying one package's migrations never marks another's as applied).
+  See `schema.ts`'s header comment for the full rationale.
+
 ## Why there's no `pay-core` client at all
 
 This package only ever talks to `durable-ledger` (and only over HTTP, once
@@ -220,6 +265,17 @@ pnpm --filter @apo/agent-orchestrator lint
 
 Requires Node 24+ and pnpm.
 
+Postgres-backed integration tests (`pg-intent-repository.integration.test.ts`,
+`intents-schema.integration.test.ts`) need a running Postgres and applied
+migrations:
+
+```bash
+docker compose up -d postgres                        # from the monorepo root
+DATABASE_URL=postgres://apo:apo@localhost:5433/apo \
+  pnpm --filter @apo/agent-orchestrator db:migrate    # dev DB
+pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to apo_test itself via globalSetup
+```
+
 ## Considered and rejected
 
 - **LangGraph.js.** It hides the mechanics of the agent's own reasoning
@@ -234,7 +290,7 @@ Requires Node 24+ and pnpm.
 - [x] Policy: pure guardrail rules + `evaluatePolicy`
 - [x] `LlmClient` port + `MockLlmClient`
 - [x] `AgentCoreClient` port + `durable-ledger` HTTP client
-- [ ] `IntentRepository` port + Postgres/in-memory adapters
+- [x] `IntentRepository` port + Postgres/in-memory adapters
 - [ ] `app/*` use-cases
 - [ ] `AnthropicLlmClient` (live)
 - [ ] Hono HTTP layer + composition root + config + `main.ts`

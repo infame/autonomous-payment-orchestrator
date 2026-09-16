@@ -11,14 +11,22 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint src"
+    "test:integration": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgres://apo:apo@localhost:5433/apo_test} vitest run --config vitest.integration.config.ts",
+    "lint": "eslint src",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/adapters/persistence/drizzle/run-migrate.ts"
   },
   "dependencies": {
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.23.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^9.19.0",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   }

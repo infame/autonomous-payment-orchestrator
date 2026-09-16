@@ -80,6 +80,24 @@ export const TERMINAL_INTENT_STATUSES: ReadonlySet<IntentStatus> = new Set([
   "needs_review",
 ]);
 
+/** Every legal `IntentStatus`, in the same order as the transition diagram above. */
+export const INTENT_STATUSES: readonly IntentStatus[] = [
+  "received",
+  "needs_clarification",
+  "proposed",
+  "needs_approval",
+  "rejected",
+  "executing",
+  "completed",
+  "failed",
+  "needs_review",
+];
+
+/** Narrows a value read back from storage (or the wire) to `IntentStatus`. */
+export function isIntentStatus(value: string): value is IntentStatus {
+  return (INTENT_STATUSES as readonly string[]).includes(value);
+}
+
 export const MAX_INTENT_TEXT_LENGTH = 10_000;
 
 /** Same shape as `durable-ledger`'s account-subject ids: a reasonable, bounded id, not free text. */

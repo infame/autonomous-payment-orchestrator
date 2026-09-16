@@ -39,8 +39,15 @@ export class InvalidProposalError extends OrchestratorError {
   readonly code = "invalid_proposal";
 }
 
+/** No intent exists for the given id. Maps to HTTP 404 (spec §9). */
+export class IntentNotFoundError extends OrchestratorError {
+  readonly code = "intent_not_found";
+  constructor(readonly id: string) {
+    super(`No intent found with id "${id}"`);
+  }
+}
+
 // Deliberately absent:
-// - `IntentNotFoundError` — needs a repository (spec step 5).
 // - `PolicyRejectedError` — not an error per spec §9: a policy `reject` is a
 //   normal return value (`PolicyVerdict`), never thrown.
 // - `LlmUnavailableError` — a port error, belongs with the `LlmClient` port
