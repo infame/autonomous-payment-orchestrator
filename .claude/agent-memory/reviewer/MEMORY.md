@@ -4,3 +4,5 @@
 - [Run the DB suites, do not just read them](verify-db-claims-by-running.md) — Postgres is usually up on :5433; probe "returns what was stored" adapter claims by running.
 - [JSDoc headers are the contract of record](doc-headers-are-load-bearing.md) — check every "always/never/null when" claim against code+tests; incl. the no-free-text-in-errors rule.
 - [README Status/order/Roadmap trio](package-readme-status-trio.md) — the three README sections restate JSDoc contracts and must all move each slice.
+- [Reviewing vendor-SDK adapters](vendor-sdk-adapter-review.md) — verify SDK claims in node_modules + a throwaway probe; walk the `cause` chain, not just the message.
+- [Prove a regression test against the pre-fix commit](verify-regression-test-against-pre-fix.md) — run the new test in a detached worktree at the old sha; vacuous tests are common.

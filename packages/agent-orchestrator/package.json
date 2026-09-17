@@ -17,6 +17,7 @@
     "db:migrate": "tsx src/adapters/persistence/drizzle/run-migrate.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.126.0",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.23.0",
     "zod": "^3.24.1"

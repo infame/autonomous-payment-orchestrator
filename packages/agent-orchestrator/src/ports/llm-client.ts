@@ -20,7 +20,10 @@ import type { AgentProposal } from "../domain/agent-proposal.js";
  *  - or rejects with an `LlmClientError` subclass, and nothing else. A
  *    caller catching a rejection from `reason()` never needs a fallback
  *    `catch`-all for "some other kind of error" — the rejection set is
- *    closed and stated below.
+ *    closed and stated below: exactly three subclasses,
+ *    `LlmUnavailableError` (transport), `LlmConfigurationError` (a vendor
+ *    rejection of the request itself), and `LlmProtocolError` (an
+ *    unusable response).
  *
  * ## Why `clarificationAnswer` is `string | null`, not spec §5's `?: string`
  *
@@ -54,26 +57,31 @@ import type { AgentProposal } from "../domain/agent-proposal.js";
  * an external system's own port-level error hierarchy, kept separate from
  * the domain it happens to be adjacent to.
  *
- * ## On `LlmProtocolError`
+ * ## On `LlmProtocolError` and `LlmConfigurationError`
  *
- * Nothing in this codebase constructs `LlmProtocolError` yet — no real LLM
- * adapter exists (that's step 7), and `MockLlmClient` is deterministic by
- * construction, so it has no "the model said something we can't parse"
- * failure mode to simulate. It's declared here, now, because the `reason()`
- * contract's full rejection set must be stated in the same place the
- * contract itself is stated, not bolted on retroactively once the first
- * class that throws it exists.
+ * `AnthropicLlmClient` (`src/adapters/llm/anthropic-llm-client.ts`, step 7)
+ * is the first — and, as of this writing, only — class that constructs
+ * either. `MockLlmClient` is deterministic by construction, so it has no
+ * "the model said something we can't parse" or "the vendor rejected the
+ * request" failure mode to simulate. Both were declared here well before
+ * that, because the `reason()` contract's full rejection set must be stated
+ * in the same place the contract itself is stated, not bolted on
+ * retroactively once the first class that throws it exists.
  *
- * ## Forward-looking rule for the future real adapter (not built in this step)
+ * ## The discipline every real adapter's error mapping must follow
  *
- * When `AnthropicLlmClient` lands, any error message it builds from this
- * port's errors must never include a raw prompt or a raw vendor response
- * body — only structural facts (which operation, whether the failure was a
- * transport error vs. an unparseable response, etc.). Same discipline
- * `PayCoreClientError`'s header requires for request bodies and tokens
- * (`packages/durable-ledger/src/ports/pay-core-errors.ts`): a natural-language
- * prompt is even more likely to carry sensitive customer content than a
- * structured payment request body, so the bar here is at least as strict.
+ * `AnthropicLlmClient`'s own error mapper (`adapters/llm/anthropic-errors.ts`)
+ * is the concrete enforcement of this rule, but it's stated here because it's
+ * a port-level invariant, not an implementation detail of one adapter: any
+ * error message built from this port's errors must never include a raw
+ * prompt, a raw vendor response body, or a raw vendor error message — only
+ * structural facts (an HTTP status, the vendor's error-type discriminator, a
+ * request id, whether the failure was a transport error vs. an unparseable
+ * response, etc.). Same discipline `PayCoreClientError`'s header requires for
+ * request bodies and tokens (`packages/durable-ledger/src/ports/pay-core-errors.ts`):
+ * a natural-language prompt is even more likely to carry sensitive customer
+ * content than a structured payment request body, so the bar here is at
+ * least as strict.
  */
 export interface LlmReasoningRequest {
   readonly intentText: string;
@@ -107,11 +115,28 @@ export class LlmUnavailableError extends LlmClientError {
 }
 
 /**
+ * The vendor rejected the request itself — bad/absent credentials, a bad
+ * model id, a malformed tool schema. A deployment/configuration fault, not
+ * a transport blip and not model misbehaviour. Terminal: identical bytes
+ * with identical config fail identically.
+ */
+export class LlmConfigurationError extends LlmClientError {
+  readonly code = "llm_configuration_error";
+  readonly retryable = false;
+  constructor(
+    readonly reason: string,
+    cause?: unknown,
+  ) {
+    super(`LLM client is misconfigured: ${reason}`, cause);
+  }
+}
+
+/**
  * The LLM answered, but its response could not be turned into a valid
  * `AgentProposal` (unparseable output, a schema the model didn't honour,
- * etc.). Not yet constructed anywhere in this codebase — see this file's
- * header. Terminal: retrying the identical request to a model that just
- * misbehaved is not expected to reliably fix it.
+ * etc.). See this file's header for the first class that constructs it.
+ * Terminal: retrying the identical request to a model that just misbehaved
+ * is not expected to reliably fix it.
  */
 export class LlmProtocolError extends LlmClientError {
   readonly code = "llm_protocol_error";

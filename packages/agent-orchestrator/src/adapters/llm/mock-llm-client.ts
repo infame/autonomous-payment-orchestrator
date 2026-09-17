@@ -16,9 +16,13 @@ import { mergeDirectives, parseDirectives } from "./directives.js";
 
 /**
  * `MockLlmClient` — the deterministic, directive-driven `LlmClient`
- * implementation. It stands in for `AnthropicLlmClient` (step 7, not built
- * yet) everywhere a real model call would otherwise be needed: local
- * development, tests, and the public demo's `mock` mode (spec §5).
+ * implementation. It stands in for `AnthropicLlmClient`
+ * (`adapters/llm/anthropic-llm-client.ts`, step 7) everywhere a real model
+ * call would otherwise be needed: local development, tests, and the public
+ * demo's `mock` mode (spec §5). `AnthropicLlmClient` exists as a standalone
+ * adapter as of step 7, but nothing wires it up yet — no composition root,
+ * no `LLM_MODE` switch (step 8) — so this class remains the only `LlmClient`
+ * actually reachable anywhere in this codebase today.
  *
  * ## Why the directive grammar is digit-free
  *

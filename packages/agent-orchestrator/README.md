@@ -18,7 +18,7 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-6 of 9 complete
+## Status: steps 1-7 of 9 complete
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
@@ -26,7 +26,8 @@ policy layer, the `LlmClient` port with its mock adapter, the
 `IntentRepository` port with its Postgres and in-memory adapters — steps
 1-5 of the spec's own implementation order (§14) — plus all five of step
 6's `app/*` use-cases: `SubmitIntent`, `GetIntent`, `AnswerClarification`,
-`RejectIntent`, and `ApproveIntent`:
+`RejectIntent`, and `ApproveIntent` — plus step 7, `AnthropicLlmClient`,
+the live `LlmClient` adapter:
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -46,14 +47,20 @@ policy layer, the `LlmClient` port with its mock adapter, the
 6. `app/*` use-cases wiring domain, policy, LLM port, and repository
    together. **All five exist: `SubmitIntent`, `GetIntent`,
    `AnswerClarification`, `RejectIntent`, and `ApproveIntent`** — see below.
-7. `adapters/llm/anthropic-llm-client.ts` — the real, live LLM adapter.
+7. **`adapters/llm/anthropic-llm-client.ts` — the real, live LLM adapter.**
+   Done: see "`LlmClient`, `MockLlmClient`, and `AnthropicLlmClient`" below.
 8. A thin Hono HTTP layer + composition root + config + `main.ts`.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-Steps 7-9 don't exist yet — no HTTP layer of this package's own, no
+Steps 8-9 don't exist yet — no HTTP layer of this package's own, no
 composition root, no `main.ts`. `AgentCoreClient` IS now wired into a
 use-case (`ApproveIntent`, below) — what's still missing is wiring
 `ApproveIntent` itself up behind a real HTTP route, which is step 8's job.
+**`AnthropicLlmClient` exists as a standalone adapter (step 7) but is NOT
+wired to anything yet.** There is no `LLM_MODE` switch, no composition root
+reading it, and no way to reach `live` mode end-to-end until step 8 lands —
+today it is exercised only by its own unit tests against a fake
+`AnthropicMessagesApi` (see below).
 
 ### `SubmitIntent` and `GetIntent` (step 6, first slice)
 
@@ -344,16 +351,17 @@ pure text parsing with no domain dependency; `rules.ts` composes the two;
 union with a separate `detail: string`, not a bare `string` — a stronger
 reading of the spec's own requirement for an "explicit reason code."
 
-## `LlmClient` and `MockLlmClient`
+## `LlmClient`, `MockLlmClient`, and `AnthropicLlmClient`
 
 `src/ports/llm-client.ts` is the outbound port to whatever turns intent text
-into an `AgentProposal` — a real vendor model (step 7) or `MockLlmClient`
-(`src/adapters/llm/mock-llm-client.ts`, this step). `reason()` either
-resolves with an already-domain-valid `AgentProposal` (built through
-`paymentProposal`/`clarifyProposal`/`declineProposal`, never a raw object
-literal) or rejects with an `LlmClientError` subclass — see the port file's
-header for the full contract, including why `clarificationAnswer` is
-`string | null` rather than the spec's `?: string` sketch.
+into an `AgentProposal` — the deterministic `MockLlmClient`
+(`src/adapters/llm/mock-llm-client.ts`) or the real vendor model,
+`AnthropicLlmClient` (`src/adapters/llm/anthropic-llm-client.ts`, step 7).
+`reason()` either resolves with an already-domain-valid `AgentProposal`
+(built through `paymentProposal`/`clarifyProposal`/`declineProposal`, never
+a raw object literal) or rejects with an `LlmClientError` subclass — see the
+port file's header for the full contract, including why `clarificationAnswer`
+is `string | null` rather than the spec's `?: string` sketch.
 
 `MockLlmClient` is steered by a small directive grammar
 (`src/adapters/llm/directives.ts`) scanned out of `intentText`/
@@ -380,6 +388,70 @@ arbitrary amount would let the mock produce proposals the guardrail this
 package exists to exercise would never actually allow through. Undirected
 text falls back to proposing the minimum candidate amount (spec §3.3's
 safe-interpretation rule) when one exists, or declining when it doesn't.
+
+### `AnthropicLlmClient` (live, step 7)
+
+`AnthropicLlmClient` (`src/adapters/llm/anthropic-llm-client.ts`) is the real
+`LlmClient` — everywhere `MockLlmClient` stands in during development,
+tests, and the demo's `mock` mode, `live` mode would use this instead once
+step 8 wires it up. It talks to `@anthropic-ai/sdk`'s Messages API, but
+never directly to `fetch`: `AnthropicLlmClientOptions.messages` is a narrow
+`AnthropicMessagesApi` interface (one `create` method) that the real SDK's
+`client.messages` satisfies structurally — the same "inject only the
+interface you need" shape `AgentCoreClient` uses for `durable-ledger`.
+
+**Three tool calls, one decision.** Rather than parsing free-form prose out
+of a text response, `reason()` forces the model to always answer via
+exactly one of three tool calls — `propose_payment`, `ask_clarifying_question`,
+`decline` (`src/adapters/llm/anthropic-tools.ts`) — via
+`tool_choice: {type: "any", disable_parallel_tool_use: true}`. These are
+response *channels* for the one `AgentProposal` union `reason()` has always
+had to return, not three new capabilities: every way the model could
+otherwise fail to produce a valid proposal — a missing field, a wrong type,
+two simultaneous tool calls, an unrecognized tool name, a `stop_reason`
+that isn't `tool_use` at all — becomes a typed, caught error instead of a
+silent misparse. `ask_clarifying_question` is structurally omitted from the
+tool list once a clarification answer is already in hand
+(`toolsFor(clarificationAnswer)`), enforcing the one-clarification-round
+rule even against a model that ignores its own instructions.
+
+**Minor units, grounding, and the steer-vs-enforce boundary.**
+`src/adapters/llm/anthropic-prompt.ts`'s system prompt spends real effort
+telling the model that `amount` is an integer in minor units (cents — "$100
+is 10000, not 100") and that a proposed amount must appear literally in the
+source text or be the *smallest* candidate when ambiguous, never the
+largest or a sum. None of that is enforcement: `reason()` itself never
+re-derives or filters on grounding. That guarantee lives entirely in
+`evaluatePolicy`'s `amountMustBeGrounded` rule (`policy/rules.ts`), applied
+uniformly to every `AgentProposal` regardless of which `LlmClient` produced
+it — a domain-valid but policy-hostile proposal from `AnthropicLlmClient` is
+expected to flow through completely untouched, both for the audit trail and
+for policy-testing parity with `MockLlmClient`.
+
+**Error mapping** (`src/adapters/llm/anthropic-errors.ts`) maps the SDK's
+error hierarchy onto this port's closed rejection set, using only
+`status`/the vendor's `type` discriminator/`requestID` — never the vendor's
+own `message`/response body, which can echo request content (including the
+customer's intent text):
+
+| Error | Triggers on |
+|---|---|
+| `LlmUnavailableError` (retryable) | timeout, connection failure, aborted request, or an API status that's `undefined`/`>=500`/`408`/`429` |
+| `LlmConfigurationError` (not retryable) | any other API error status (400/401/403/404/409/422 — bad credentials, bad model id, malformed tool schema) or a non-`APIError` SDK failure before a request was even sent |
+| `LlmProtocolError` (not retryable) | a response that isn't a single valid tool call — wrong `stop_reason`, zero/multiple `tool_use` blocks, an unrecognized tool name, a schema-invalid `input`, or a domain-valid-shape rejection from `paymentProposal`/`clarifyProposal`/`declineProposal` itself |
+
+**The API key never reaches `AnthropicLlmClient`.** `createAnthropicClient`
+(`src/adapters/llm/anthropic-client.ts`) is the only place a real API key is
+handled; it also closes a real footgun in the SDK's own constructor — an
+`apiKey` of `undefined` silently falls back to `process.env.ANTHROPIC_API_KEY`
+or a config-file/profile chain, so an under-configured deployment can end up
+authenticating as whatever credential happens to be on the host — an
+explicit blank string does *not* trigger that fallback (it just 401s later,
+more slowly and more confusingly). `createAnthropicClient` requires a
+non-blank `apiKey` up front and throws `LlmConfigurationError` immediately
+otherwise. Only the narrow `AnthropicMessagesApi` surface (never the full
+client, never the key itself) is what actually gets injected into
+`AnthropicLlmClient`.
 
 ## Persistence & concurrency
 
@@ -482,7 +554,11 @@ pnpm --filter @apo/agent-orchestrator typecheck
 pnpm --filter @apo/agent-orchestrator lint
 ```
 
-Requires Node 24+ and pnpm.
+Requires Node 24+ and pnpm. No test in this package requires an
+`ANTHROPIC_API_KEY` or makes a real network call — `AnthropicLlmClient`'s
+own suite (`anthropic-llm-client.test.ts`) exercises it entirely against
+`FakeAnthropicMessages` (`fake-anthropic-messages.ts`), an in-process
+double for the SDK's narrow `AnthropicMessagesApi` surface.
 
 Postgres-backed integration tests (`pg-intent-repository.integration.test.ts`,
 `intents-schema.integration.test.ts`) need a running Postgres and applied
@@ -502,6 +578,30 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
   project's stated differentiator (the deterministic policy layer wrapped
   around a non-deterministic LLM call). A framework that hides exactly the
   part meant to be visible would defeat the point of writing this package.
+- **Single tool plus parsed prose.** An earlier sketch had the model answer
+  in free text (optionally with one "propose a payment" tool) and parse a
+  structured decision back out of it for the other two outcomes. Rejected:
+  every additional thing a text parser has to recognize (a clarifying
+  question, a decline, a refusal, an off-topic reply) is another silent
+  misparse waiting to happen. Three tool calls covering the whole
+  `AgentProposal` union, with `tool_choice` forcing exactly one, turns every
+  one of those into a typed `LlmProtocolError` instead.
+- **The SDK's structured-output/`.parse()` feature.** Anthropic's SDK offers
+  a client-side parsing/validation helper for exactly this kind of "make the
+  model return a typed shape" problem. Rejected here because it would move
+  the failure boundary — where a malformed model response turns into a typed
+  error — out of code this package owns and into the SDK's own internals,
+  which is precisely the boundary `anthropic-llm-client.test.ts` needs to
+  control and assert against directly (missing fields, wrong types, two
+  simultaneous tool calls, etc.).
+- **A real-socket fake server for the vendor API, à la
+  `fake-durable-ledger-server.ts`.** Rejected: ADR-0006's case for a real
+  `node:http` server over a stub is that only a real socket honestly
+  exercises `fetch`/timeout/`AbortSignal` plumbing — but that plumbing isn't
+  what's risky in `AnthropicLlmClient`. The risky code is prompt/tool
+  assembly and response parsing, which `FakeAnthropicMessages` (an in-process
+  double for the SDK's own narrow `AnthropicMessagesApi`) already exercises
+  directly, with no timeout/socket machinery of its own to get subtly wrong.
 
 ## Roadmap
 
@@ -514,6 +614,6 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `app/*`: `AnswerClarification`
 - [x] `app/*`: `RejectIntent`
 - [x] `app/*`: `ApproveIntent`
-- [ ] `AnthropicLlmClient` (live)
+- [x] `AnthropicLlmClient` (live)
 - [ ] Hono HTTP layer + composition root + config + `main.ts`
 - [ ] End-to-end demo scenario
