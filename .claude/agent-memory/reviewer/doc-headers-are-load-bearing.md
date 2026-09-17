@@ -74,3 +74,15 @@ the use-case has no `await` between `findById` and `update`. A conflict test
 is only non-vacuous if it asserts the *winner's* final stored state, not just
 that an error was thrown.
 
+**Closed (2026-09-16, `chore/agent-orchestrator-scoping-deferral-notes`):** both
+omissions above were fixed doc-only — a `## No caller/customer scoping (yet)`
+section now exists on `get-intent.ts`, `answer-clarification.ts` and
+`reject-intent.ts`, plus a `## Return shape` section on `reject-intent.ts`, and
+the README's `RejectIntent` section closes with a "none of the four use-cases
+scope by caller/customer" paragraph. Expect the same two sections on
+`ApproveIntent`; if that slice's header is silent on scoping, it is a defect,
+not a nit. Note the house style these sections established: name the future
+route (`POST /intents/:id/approve`), name the field ownership would be checked
+against (`Intent.customerId`), and name the step that must close it (step 8,
+the Hono HTTP layer per README's 9-step list).
+

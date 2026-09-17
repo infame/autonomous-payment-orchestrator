@@ -99,6 +99,17 @@ const SYNTHETIC_SECOND_CLARIFICATION_DECLINE = declineProposal(
  * (no longer `needs_clarification`), and throw `InvalidIntentStateError`
  * after wastefully paying for a second LLM call — converting one error into
  * another, never succeeding.
+ *
+ * ## No caller/customer scoping (yet)
+ *
+ * `AnswerClarificationCommand` carries no caller identity — anyone who
+ * knows an intent id can supply its answer, steer the resulting proposal,
+ * and spend an LLM call on someone else's intent. Unlike `GetIntent`, this
+ * is a state-CHANGING operation, so this gap matters more here. Ownership
+ * scoping against `Intent.customerId` is deferred to the future HTTP/auth
+ * layer (step 8) and MUST be enforced there before this is exposed as
+ * `POST /intents/:id/clarify` — this use-case alone cannot and does not
+ * check it.
  */
 export class AnswerClarification {
   private readonly policyConfig: PolicyConfig;

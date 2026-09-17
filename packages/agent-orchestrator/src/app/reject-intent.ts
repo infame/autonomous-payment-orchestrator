@@ -65,6 +65,28 @@ export type RejectIntentCommand = z.infer<typeof RejectIntentCommand>;
  * reject land on top of an already-executing workflow, meaning money moved
  * but the persisted record claims otherwise. If `update()` throws here, the
  * correct behaviour is exactly what already happens: let it propagate.
+ *
+ * ## Return shape: a bare `IntentView`, not `{ intent, verdict }`
+ *
+ * `SubmitIntent`/`AnswerClarification` return `{ intent, verdict }` because
+ * policy may or may not have just run, and an `allow` verdict is
+ * deliberately not persisted — the caller needs the ephemeral verdict
+ * alongside the stored view. Here that shape would be actively misleading:
+ * this use-case never computes a verdict, so a `verdict` field would always
+ * read `null`, even though `intent.policyVerdict` on the returned view is
+ * NOT null — it's the `needs_approval` verdict that created the approval
+ * gate in the first place. Returning a bare `IntentView` (matching
+ * `GetIntent`'s return shape) avoids that false signal.
+ *
+ * ## No caller/customer scoping (yet)
+ *
+ * `RejectIntentCommand` carries no caller identity — anyone who knows an
+ * intent id can reject it, terminating someone else's pending payment.
+ * This is a state-CHANGING operation, so the gap matters more here than on
+ * `GetIntent`'s read path. Ownership scoping against `Intent.customerId`
+ * is deferred to the future HTTP/auth layer (step 8) and MUST be enforced
+ * there before this is exposed as `POST /intents/:id/reject` — this
+ * use-case alone cannot and does not check it.
  */
 export class RejectIntent {
   constructor(

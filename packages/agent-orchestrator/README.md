@@ -101,7 +101,10 @@ call propagates uncaught with no retry: the only realistic trigger is two
 concurrent answers to the same intent, and a retry would just re-read the
 now-resolved intent and throw `InvalidIntentStateError` after wastefully
 paying for a second LLM call — trading one error for another, never
-succeeding.
+succeeding. Like `RejectIntent` below, it does not yet scope by
+caller/customer — anyone who knows an intent id can supply its answer;
+that's deferred to the future HTTP/auth layer along with the rest of the
+use-cases below.
 
 The clarification answer **widens the grounded-amount set by design**
 (spec §4): a user can ground any amount by typing it into their answer, and
@@ -149,6 +152,16 @@ preventing a reject from clobbering a row that a concurrent (future)
 `ApproveIntent` has already claimed into `executing`: without it, a reject
 could land on top of an already-executing workflow, meaning money moved
 but the persisted record claims otherwise.
+
+**None of the four use-cases above scope by caller/customer yet** — each
+takes a bare `intentId` (or, for `SubmitIntent`, a caller-supplied
+`customerId` that nothing cross-checks against an authenticated identity).
+For `GetIntent` that's a read-only gap; for `AnswerClarification` and
+`RejectIntent` it means anyone holding an intent id can steer or terminate
+someone else's pending payment. This is deliberately deferred to the
+future HTTP/auth layer (step 8), same stage `durable-ledger` was at before
+its own HTTP layer landed — but it must be closed there before any of
+these use-cases are reachable over the network.
 
 ## `AgentCoreClient` and `HttpDurableLedgerClient`
 
