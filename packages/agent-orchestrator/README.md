@@ -18,15 +18,15 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-5 of 9, plus three of step 6's five use-cases
+## Status: steps 1-5 of 9, plus four of step 6's five use-cases
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
 `AgentCoreClient` port with its `durable-ledger` HTTP client, and the
 `IntentRepository` port with its Postgres and in-memory adapters — steps
 1-5 of the spec's own implementation order (§14) — plus `SubmitIntent`,
-`GetIntent`, and `AnswerClarification`, three of step 6's five `app/*`
-use-cases:
+`GetIntent`, `AnswerClarification`, and `RejectIntent`, four of step 6's
+five `app/*` use-cases:
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -44,15 +44,15 @@ use-cases:
    its own `agent` Postgres schema/migration, `PgIntentRepository`, and
    `InMemoryIntentRepository`. See "Persistence & concurrency" below.
 6. `app/*` use-cases wiring domain, policy, LLM port, and repository
-   together. **`SubmitIntent`, `GetIntent`, and `AnswerClarification`
-   exist** — see below. `ApproveIntent` and `RejectIntent` do not yet.
+   together. **`SubmitIntent`, `GetIntent`, `AnswerClarification`, and
+   `RejectIntent` exist** — see below. `ApproveIntent` does not yet.
 7. `adapters/llm/anthropic-llm-client.ts` — the real, live LLM adapter.
 8. A thin Hono HTTP layer + composition root + config + `main.ts`.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-Steps 7-9, and the rest of step 6, don't exist yet — no HTTP layer of this
-package's own, no composition root, no `AgentCoreClient` wiring into any
-use-case.
+Steps 7-9, and `ApproveIntent` (the rest of step 6), don't exist yet — no
+HTTP layer of this package's own, no composition root, no `AgentCoreClient`
+wiring into any use-case.
 
 ### `SubmitIntent` and `GetIntent` (step 6, first slice)
 
@@ -111,6 +111,44 @@ it has nothing to say about whether a human-supplied number is
 *authorized*. `maxAutoApproveAmount`/`maxHardLimitAmount` are what actually
 bound a human-supplied number, and both still run unchanged against
 whatever amount the answer grounds.
+
+### `RejectIntent`
+
+`RejectIntent` (`src/app/reject-intent.ts`) is the single transition
+`needs_approval → rejected`: an explicit human rejection of an intent
+sitting at the approval gate. It takes no `LlmClient` and no
+`PolicyConfig` — there is no LLM call and no policy re-evaluation, unlike
+`SubmitIntent`/`AnswerClarification`. `Intent.rejectByApprover`'s own
+status guard is the only wrong-status check; this use-case adds none of
+its own.
+
+There is deliberately no rejection-reason field on `RejectIntentCommand`:
+spec §7's `POST /intents/:id/reject` has an empty request body, unlike
+`/clarify`'s `{ answer }`. A human rejection is already uniquely
+distinguishable from the other three routes into `rejected`, purely from
+the persisted row:
+
+| Route | Source status | Mechanism | Discriminator |
+| --- | --- | --- | --- |
+| Policy hard reject | `proposed` | `rejectByPolicy` | `policyVerdict.decision === "reject"` |
+| Human rejection | `needs_approval` | `rejectByApprover` | `policyVerdict?.decision === "needs_approval"` |
+| Agent declines, first pass | `received` | `declineByAgent` | `policyVerdict === null && proposal.kind === "decline" && clarificationAnswer === null` |
+| Agent declines, after clarification | `needs_clarification` | `declineByAgent` | `policyVerdict === null && proposal.kind === "decline" && clarificationAnswer !== null` |
+
+`rejectByApprover` does NOT clear `policyVerdict` — it stays exactly as
+`requireApproval` set it, which is why its row is uniquely identifiable by
+`decision === "needs_approval"` rather than by a null verdict. See
+`domain/intent.ts`'s class header for the full rationale.
+
+This use-case performs exactly one repository write
+(`IntentRepository.update`), and — the single most important fact about
+this file — an `IntentVersionConflictError` from that call propagates
+uncaught, with no retry and no fallback to an unconditional write. The
+conditional `update(intent, expectedVersion)` call is the entire mechanism
+preventing a reject from clobbering a row that a concurrent (future)
+`ApproveIntent` has already claimed into `executing`: without it, a reject
+could land on top of an already-executing workflow, meaning money moved
+but the persisted record claims otherwise.
 
 ## `AgentCoreClient` and `HttpDurableLedgerClient`
 
@@ -322,6 +360,14 @@ which has none.
   transition ever re-enters `needs_clarification`) plus
   `Intent.recordClarificationAnswer`'s own "already set" guard — a second
   DB-level enforcement mechanism would be redundant, not defense-in-depth.
+- **An approve and a reject are made mutually exclusive purely by the
+  optimistic-lock version check**, not by any row lock. `RejectIntent`'s
+  conditional `update(intent, expectedVersion)` call — the equivalent of
+  `UPDATE ... WHERE id = $1 AND version = $2` — is the entire mechanism
+  stopping a reject from clobbering a row a concurrent (future)
+  `ApproveIntent` has already moved to `executing`. This is exactly why
+  that write must never become unconditional, and why a version conflict
+  on it must never be retried-and-forced through.
 
 ## Why there's no `pay-core` client at all
 
@@ -379,7 +425,8 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `IntentRepository` port + Postgres/in-memory adapters
 - [x] `app/*`: `SubmitIntent`, `GetIntent`
 - [x] `app/*`: `AnswerClarification`
-- [ ] `app/*`: `ApproveIntent`, `RejectIntent`
+- [x] `app/*`: `RejectIntent`
+- [ ] `app/*`: `ApproveIntent`
 - [ ] `AnthropicLlmClient` (live)
 - [ ] Hono HTTP layer + composition root + config + `main.ts`
 - [ ] End-to-end demo scenario

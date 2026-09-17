@@ -51,3 +51,26 @@ Related convention worth checking on every new `app/*` use-case: the README
 records that `GetIntent` "does not yet scope by caller/customer (deferred to
 the future HTTP/auth layer)". A new *mutating* use-case that inherits that gap
 must restate it — in this codebase silence in a header reads as "handled".
+
+**Third instance (2026-09-16, `feat/agent-orchestrator-reject-intent`):**
+headers were *accurate* this time — every "only/never/uniquely" sentence in
+`domain/intent.ts`'s four-route discriminator and `app/reject-intent.ts`
+checked out against code and tests. What recurs now is omission, not falsity:
+- the return-shape asymmetry (`RejectIntent.execute` returns a bare
+  `IntentView`, its mutating siblings return `{ intent, verdict }`) was
+  deliberate but undocumented;
+- the unscoped-caller gap (README line ~74, "does not yet scope by
+  caller/customer") still is not restated on mutating use-cases, now twice
+  (`AnswerClarification`, `RejectIntent`).
+Ask for both on the next `app/*` slice (`ApproveIntent`), where "anyone with
+an id can approve" is the sharper version of the same gap.
+
+Test-double convention validated in that slice and worth expecting in
+`ApproveIntent`: version conflicts are proved with a repository subclass
+carrying a settable `race` hook that writes before delegating to
+`super.update()` — NOT `answer-clarification.test.ts`'s
+`Promise.allSettled` two-`execute()` race, which is non-deterministic when
+the use-case has no `await` between `findById` and `update`. A conflict test
+is only non-vacuous if it asserts the *winner's* final stored state, not just
+that an error was thrown.
+

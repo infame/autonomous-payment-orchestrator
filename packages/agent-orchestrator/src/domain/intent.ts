@@ -52,15 +52,35 @@
  * in spec steps 5/6, not here.
  *
  * Why there is no `failureReason`/`rejectionReason` field: the cause of a
- * `rejected` intent is always derivable three ways through the public API —
- * `proposal?.kind === "decline"` means the agent declined; `policyVerdict
- * ?.decision === "reject"` means policy rejected; neither means a human
- * rejected it via `rejectByApprover`. The cause of a `failed`/`needs_review`
- * intent lives in `durable-ledger`/Inngest, reachable via
- * `durableLedgerEventId`. Storing a duplicate summary here would be a stale
- * copy of another system's truth — the same principle `durable-ledger`'s
- * ADR-0010 already established for not building a local `workflow_runs`
- * table.
+ * `rejected` intent is always derivable from the persisted row alone, via
+ * exactly one of four routes, distinguishable by `policyVerdict` and
+ * `proposal` together:
+ *
+ *   - `proposed → rejected` (policy hard reject, `rejectByPolicy`):
+ *     `policyVerdict.decision === "reject"`.
+ *   - `needs_approval → rejected` (explicit human rejection,
+ *     `rejectByApprover`): `policyVerdict?.decision === "needs_approval"`.
+ *     `rejectByApprover` does NOT clear `policyVerdict` — it stays exactly
+ *     as `requireApproval` set it (the `needs_approval` verdict that opened
+ *     the approval gate in the first place), so this is the unique
+ *     discriminator for a human rejection: no other route into `rejected`
+ *     can leave `policyVerdict.decision === "needs_approval"` behind, since
+ *     `requireApproval` is the only transition that ever writes that
+ *     decision, and it's a dead end for anything except `rejectByApprover`/
+ *     `approve`.
+ *   - `received → rejected` (agent declines on its first pass,
+ *     `declineByAgent`): `policyVerdict === null && proposal?.kind ===
+ *     "decline" && clarificationAnswer === null`.
+ *   - `needs_clarification → rejected` (agent declines after the
+ *     clarification round, `declineByAgent`, including the synthetic
+ *     second-clarify decline): `policyVerdict === null && proposal?.kind
+ *     === "decline" && clarificationAnswer !== null`.
+ *
+ * The cause of a `failed`/`needs_review` intent lives in
+ * `durable-ledger`/Inngest, reachable via `durableLedgerEventId`. Storing a
+ * duplicate summary here would be a stale copy of another system's truth —
+ * the same principle `durable-ledger`'s ADR-0010 already established for not
+ * building a local `workflow_runs` table.
  */
 
 import type {

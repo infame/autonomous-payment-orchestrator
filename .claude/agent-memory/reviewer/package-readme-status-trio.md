@@ -24,3 +24,9 @@ use-cases"; a follow-up doc-only branch had to fix it.
 - Also grep the README's *other* sections for forward-looking phrases ("once
   the use-case layer exists", "once there's a use-case to test against it") —
   they go stale one slice later than the Status header does.
+- In `agent-orchestrator`'s README the trio is really a quartet: the prose
+  paragraph right after the numbered list ("Steps 7-9, and the rest of step 6,
+  don't exist yet ...") enumerates what's missing and goes stale with the same
+  slice. `feat/agent-orchestrator-reject-intent` (2026-09-16) updated all four
+  correctly — that is the bar.
+

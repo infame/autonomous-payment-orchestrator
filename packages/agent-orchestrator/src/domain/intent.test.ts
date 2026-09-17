@@ -238,12 +238,16 @@ describe("Intent legal transitions", () => {
     expect(intent.policyVerdict).toEqual(rejectVerdict);
   });
 
-  it("rejectByApprover: needs_approval → rejected", () => {
+  it("rejectByApprover: needs_approval → rejected, policyVerdict survives unchanged", () => {
     const intent = submit();
     intent.propose(proposal);
     intent.requireApproval(needsApprovalVerdict);
     intent.rejectByApprover();
     expect(intent.status).toBe("rejected");
+    // rejectByApprover does NOT clear policyVerdict — it's the discriminator
+    // that uniquely identifies a human rejection on a persisted row. See
+    // class header.
+    expect(intent.policyVerdict).toEqual(needsApprovalVerdict);
   });
 
   it("autoApprove: proposed → executing, stores verdict and durableLedgerEventId", () => {

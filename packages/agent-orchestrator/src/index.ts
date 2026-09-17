@@ -5,8 +5,8 @@
  * `policy/` guardrail layer, the `LlmClient` port with its directive-driven
  * `MockLlmClient` adapter, the `AgentCoreClient` port, and the
  * `IntentRepository` port with its Postgres and in-memory adapters — plus
- * three of step 6's five `app/*` use-cases: `SubmitIntent`, `GetIntent`, and
- * `AnswerClarification`.
+ * four of step 6's five `app/*` use-cases: `SubmitIntent`, `GetIntent`,
+ * `AnswerClarification`, and `RejectIntent`.
  *
  * `MockLlmClient` and its directive grammar ARE exported (unlike
  * `durable-ledger`'s test-only fakes) — `mock` is a real runtime mode for
@@ -16,9 +16,9 @@
  * Not exported: `db.ts`/`mappers.ts`/`errors.ts`/`migrator.ts`/
  * `run-migrate.ts`/`test-support.ts` (internal to the Postgres adapter,
  * matching `durable-ledger`'s convention). Not exported because they don't
- * exist yet: the `ApproveIntent`/`RejectIntent` use-cases (rest of step 6);
- * the HTTP/Hono layer; the composition root, config, and `main.ts`; and
- * `AgentCoreClient` wiring into a use-case (step 8).
+ * exist yet: the `ApproveIntent` use-case (rest of step 6); the HTTP/Hono
+ * layer; the composition root, config, and `main.ts`; and `AgentCoreClient`
+ * wiring into a use-case (step 8).
  */
 
 // Domain
@@ -43,6 +43,7 @@ export * from "./app/apply-policy.js";
 export * from "./app/submit-intent.js";
 export * from "./app/get-intent.js";
 export * from "./app/answer-clarification.js";
+export * from "./app/reject-intent.js";
 
 // Adapters
 export * from "./adapters/llm/directives.js";
