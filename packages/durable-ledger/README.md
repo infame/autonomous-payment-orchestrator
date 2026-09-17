@@ -506,7 +506,7 @@ adapter — a Hono app over `LedgerRepository` and a new `WorkflowRuns` port
 
 | Route | What it does |
 |---|---|
-| `POST /workflows/payment` | Validates the body against `paymentExecuteRequestedSchema`, calls `WorkflowRuns.startPaymentExecute` (→ `inngest.send(...)`), returns `202 { eventId, statusUrl }`. |
+| `POST /workflows/payment` | Validates the body against `paymentExecuteRequestedSchema`, optionally reads an `Idempotency-Key` header (see "De-duplicating a trigger" below), calls `WorkflowRuns.startPaymentExecute` (→ `inngest.send(...)`), returns `202 { eventId, statusUrl }` — always, whether or not the request deduplicated. |
 | `GET /workflows/:eventId` | Returns a `WorkflowRunSnapshot` — `status` (`queued`/`running`/`completed`/`failed`/`cancelled`), `runId`, timestamps, and `needsReview`/`failureMessage`. `404` if the engine doesn't recognize the id. |
 | `GET /ledger/entries?paymentId=…` or `?operationId=…` | Exactly one of the two query params, enforced by a Zod `.refine`. An empty result is `200 { entries: [] }`, never `404`. |
 | `GET /ledger/accounts/:account/balance?currency=EUR` | `:account` is `LedgerAccount`'s serialized form (`merchant:42`, `acquirer_clearing`), percent-decoded then parsed. |
@@ -519,14 +519,51 @@ map to **400**, not 422, here — in this HTTP layer they only ever arise from
 parsing a request path/query parameter (a malformed request), never from a
 rejected state transition, so 400 is the honest status.
 
-**Triggering a run does not hand back a caller-chosen id.** `startPaymentExecute`
-resolves with Inngest's own server-assigned event id (a ULID) — there is no
-SDK-level way to look a run up by anything else, and a self-minted
-correlation id is rejected outright by Inngest's own API (verified: it's
-strictly ULID-shaped). A caller that loses the `202` response's `eventId`
-cannot re-find that run. Accepted limitation for a portfolio-scale demo —
-see [ADR-0010](../../docs/adr/0010-run-status-from-inngest-not-a-workflow-runs-table.md)
-for the reasoning behind not building a `workflow_runs` table to fix this.
+**Looking a run up by a caller-chosen id is still impossible; preventing a
+duplicate trigger is not the same thing, and is now possible.** `GET
+/workflows/:eventId` only ever accepts Inngest's own server-assigned event
+id (a ULID) — Inngest's REST API rejects a non-ULID id outright (`GET
+/v1/events/my-id/runs` → `400 Invalid event ID`, verified). A caller that
+loses the `202` response's `eventId` still cannot re-find that run by any
+value it chose itself; that half of the old claim stands, see
+[ADR-0010](../../docs/adr/0010-run-status-from-inngest-not-a-workflow-runs-table.md).
+What changed: a caller can now supply an `Idempotency-Key` header on the
+*trigger* itself to stop a retried/duplicated `POST /workflows/payment` from
+starting a second, independent run — see
+[ADR-0013](../../docs/adr/0013-optional-trigger-idempotency-key.md) and "De
+-duplicating a trigger" below. Dedup and lookup are different capabilities;
+this section used to conflate them.
+
+### De-duplicating a trigger
+
+An optional `Idempotency-Key` header on `POST /workflows/payment` is
+forwarded to Inngest as the triggering event's own `id`, namespaced
+`payment-execute:<merchantId>:<key>`. Two requests with the same key
+(for the same merchant) produce two different `202` responses (two
+different `eventId`s) but Inngest starts only **one** run — see
+[ADR-0013](../../docs/adr/0013-optional-trigger-idempotency-key.md) for the
+verified mechanics. Four things to know before using it:
+
+- **The "dud handle" consequence.** The deduplicated request's `eventId` is
+  real, but will never have a run attached to it — `GET
+  /workflows/:eventId` for it reads `queued` forever. That is the expected,
+  documented outcome, not a bug to chase.
+- **Namespacing by merchant only partially closes the collision risk.**
+  Two different merchants choosing the same key independently can't
+  collide with each other, but the same merchant reusing the same key for
+  two genuinely different payments still collides — silently, with the
+  same dud-handle outcome. Choose a key that's unique per logical payment
+  attempt (e.g. an intent id), not a constant or a shared counter.
+- **Weaker than pay-core's own `Idempotency-Key`.** Same header name,
+  different contract: pay-core (`packages/pay-core`) stores the first
+  call's result and replays it on a same-key retry, 409ing a
+  same-key/different-body retry as a detected conflict. Here, a
+  same-key/different-body retry is **silently discarded** — there is no
+  stored result to replay and no conflict detection at all.
+- **Never derive this key from a credential or PII.** It is stored by, and
+  visible in, Inngest's own dashboard/event log — the same boundary
+  [ADR-0012](../../docs/adr/0012-payment-method-token-is-supplied-not-proposed.md)
+  draws around `paymentMethodToken` applies to this key too.
 
 **`GET /workflows/:eventId` reads run status live from Inngest's own REST
 API**, not from any table this package owns — `InngestWorkflowRuns`
@@ -659,3 +696,7 @@ the full rationale.
 - [x] Dockerfile + CI — the package's own `Dockerfile`, `docker-compose.yml`
       wiring for a real Inngest dev server, and the monorepo CI workflow
       (`.github/workflows/ci.yml`)
+- [x] Follow-up: optional `Idempotency-Key` header on `POST
+      /workflows/payment`, forwarded to Inngest as its event dedup id —
+      discovered while planning `agent-orchestrator`'s `ApproveIntent`
+      (ADR-0013)

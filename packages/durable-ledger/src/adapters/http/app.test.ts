@@ -83,6 +83,74 @@ describe("createLedgerApp", () => {
       const body = (await res.json()) as { error: { code: string } };
       expect(body.error.code).toBe("invalid_json");
     });
+
+    it("forwards the Idempotency-Key header to the port", async () => {
+      const { app, runs } = buildApp();
+      const key = "intent-abc-123";
+      const res = await app.request("/workflows/payment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        },
+        body: JSON.stringify(PAYMENT_EXECUTE_BODY),
+      });
+      expect(res.status).toBe(202);
+      expect(runs.startKeys[0]).toBe(key);
+      expect(runs.startCalls[0]).toEqual(PAYMENT_EXECUTE_BODY);
+    });
+
+    it("calls the port with no key when the header is absent", async () => {
+      const { app, runs } = buildApp();
+      const res = await app.request("/workflows/payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(PAYMENT_EXECUTE_BODY),
+      });
+      expect(res.status).toBe(202);
+      expect(runs.startKeys[0]).toBeUndefined();
+    });
+
+    it.each([
+      ["a blank string", ""],
+      ["a string containing a space", "has a space"],
+      ["a 201-character string", "a".repeat(201)],
+      ["a string containing a control character", "bad\x01key"],
+    ])(
+      "returns 400 validation_failed for %s and never calls the port",
+      async (_label, key) => {
+        const { app, runs } = buildApp();
+        const res = await app.request("/workflows/payment", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": key,
+          },
+          body: JSON.stringify(PAYMENT_EXECUTE_BODY),
+        });
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { error: { code: string } };
+        expect(body.error.code).toBe("validation_failed");
+        expect(runs.startCalls).toHaveLength(0);
+        expect(runs.startKeys).toHaveLength(0);
+      },
+    );
+
+    it("the 202 response shape is unchanged when a key is supplied", async () => {
+      const { app } = buildApp();
+      const res = await app.request("/workflows/payment", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "intent-abc-123",
+        },
+        body: JSON.stringify(PAYMENT_EXECUTE_BODY),
+      });
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual(["eventId", "statusUrl"]);
+      expect(body.statusUrl).toBe(`/workflows/${body.eventId as string}`);
+    });
   });
 
   describe("GET /workflows/:eventId", () => {

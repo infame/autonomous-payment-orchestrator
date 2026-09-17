@@ -10,7 +10,7 @@ import {
   CurrencyQuery,
 } from "./server-schemas.js";
 import { toLedgerEntryView } from "./ledger-view.js";
-import { readJsonBody } from "./request.js";
+import { optionalIdempotencyKey, readJsonBody } from "./request.js";
 import { HttpError, mapError } from "./server-error-mapper.js";
 
 export interface LedgerAppDeps {
@@ -35,8 +35,14 @@ export function createLedgerApp(deps: LedgerAppDeps): Hono {
   const app = new Hono();
 
   app.post("/workflows/payment", async (c) => {
+    // Read/validate the header before touching the request body, so a
+    // malformed Idempotency-Key fails fast without consuming the stream.
+    const key = optionalIdempotencyKey(c);
     const body = StartPaymentWorkflowBody.parse(await readJsonBody(c));
-    const { eventId } = await deps.runs.startPaymentExecute(body);
+    const { eventId } = await deps.runs.startPaymentExecute(
+      body,
+      key === undefined ? undefined : { idempotencyKey: key },
+    );
     return c.json({ eventId, statusUrl: `/workflows/${eventId}` }, 202);
   });
 

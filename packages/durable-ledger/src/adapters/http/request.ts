@@ -1,5 +1,17 @@
 import type { Context } from "hono";
 import { HttpError } from "./server-error-mapper.js";
+import { IdempotencyKeyHeader } from "./server-schemas.js";
+
+/**
+ * Mirrors pay-core's `requireIdempotencyKey`, but optional: this route
+ * accepts a trigger with no key at all (pre-existing callers), and only
+ * validates one that is actually present. A present-but-blank header is a
+ * client mistake, not "absent" — it is rejected, never silently ignored.
+ */
+export function optionalIdempotencyKey(c: Context): string | undefined {
+  const raw = c.req.header("Idempotency-Key");
+  return raw === undefined ? undefined : IdempotencyKeyHeader.parse(raw);
+}
 
 /**
  * Reads and parses the request body as JSON. An empty body is not an error

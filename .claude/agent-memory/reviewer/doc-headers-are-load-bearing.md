@@ -86,3 +86,36 @@ route (`POST /intents/:id/approve`), name the field ownership would be checked
 against (`Intent.customerId`), and name the step that must close it (step 8,
 the Hono HTTP layer per README's 9-step list).
 
+
+**Fourth instance (2026-09-17, `feat/durable-ledger-workflow-idempotency-key`):**
+a new helper (`optionalIdempotencyKey`) was inserted into
+`durable-ledger/src/adapters/http/request.ts` *between* the existing
+`readJsonBody` JSDoc block and `readJsonBody` itself, leaving two stacked
+JSDoc blocks above the new function and `readJsonBody` undocumented. Nothing
+lies, but a contract header silently detached from its function. Check this
+whenever a diff adds an `export function` near the top of an existing file:
+the reference layout is pay-core's own `request.ts` (each helper carries its
+own one-line header directly above it).
+
+Header-validation testing note from the same branch: a Fetch `Headers` object
+rejects NUL/CR/LF in a header *value* before the request reaches Hono, but
+passes other control chars (`\x01`) through verbatim. So a "rejects control
+characters" test for a header regex must use `\x01`, not `\x00` — with
+`\x00` the test would throw in `Headers` construction and prove nothing about
+the app's regex.
+
+**Closed (2026-09-17, commit `437f9ad` on the same branch):** each function in
+`durable-ledger/src/adapters/http/request.ts` owns its header again, in
+pay-core's order (idempotency helper first, then `readJsonBody`).
+
+Convention established by the same fix and worth expecting on every future
+port/adapter slice in this repo: **a validation rule stated in a port's JSDoc
+must be enforced by the adapter itself, not only at the HTTP boundary** —
+`agent-orchestrator` is expected to call `durable-ledger`'s ports directly
+(no `request.ts`), so "the route validates it" is not validation. The house
+answer is to duplicate the regex into the adapter with a comment saying the
+duplication is deliberate and naming the future direct caller, rather than
+importing across the `http/` ↔ `inngest/` module boundary. Related trap seen
+here: when an id is namespaced by concatenation (`prefix:${merchantId}:${key}`),
+check whether the delimiter can occur in either component — if both are
+free-form strings the namespace is ambiguous.

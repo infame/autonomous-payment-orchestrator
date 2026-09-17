@@ -4,12 +4,29 @@ import { NEEDS_REVIEW_MARKER } from "../../workflow/compensation.js";
 import type { PaymentExecuteRequested } from "../../workflow/events.js";
 import {
   WorkflowEngineUnavailableError,
+  type StartPaymentExecuteOptions,
   type WorkflowRunSnapshot,
   type WorkflowRunStatus,
   type WorkflowRuns,
 } from "../../ports/workflow-runs.js";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
+
+/** Namespaces caller keys inside Inngest's event-id space and keeps its dashboard readable. */
+const DEDUPE_ID_PREFIX = "payment-execute:";
+
+/**
+ * Same shape contract as `IdempotencyKeyHeader`
+ * (`../http/server-schemas.ts`) — printable ASCII, no spaces/control
+ * characters, 1-200 chars — duplicated here rather than imported so this
+ * adapter validates a key's *shape* on its own, independent of whether the
+ * caller arrived through `request.ts`/HTTP at all. A future direct caller
+ * of this port (e.g. `agent-orchestrator`'s planned `ApproveIntent`, which
+ * talks to `WorkflowRuns` without going through this package's HTTP layer)
+ * gets the same validation an HTTP caller gets for free, instead of a
+ * silently-forwarded unvalidated string.
+ */
+const IDEMPOTENCY_KEY_SHAPE = /^[\x21-\x7E]{1,200}$/;
 
 /**
  * `AbortSignal.timeout` is supported at runtime on Node 24 but not resolvable
@@ -136,12 +153,38 @@ export class InngestWorkflowRuns implements WorkflowRuns {
 
   async startPaymentExecute(
     data: PaymentExecuteRequested,
+    options?: StartPaymentExecuteOptions,
   ): Promise<{ readonly eventId: string }> {
+    const key = options?.idempotencyKey;
+    if (key !== undefined) {
+      if (key.trim() === "") {
+        throw new Error(
+          "startPaymentExecute: idempotencyKey must not be blank",
+        );
+      }
+      if (!IDEMPOTENCY_KEY_SHAPE.test(key)) {
+        throw new Error(
+          "startPaymentExecute: idempotencyKey has an invalid shape (printable ASCII, no spaces/control characters, max 200 chars)",
+        );
+      }
+    }
+
+    // Namespaced by merchantId, not just the caller's own key: two
+    // unrelated callers picking the same "natural" key (order-1, a shared
+    // counter, ...) for two DIFFERENT merchants must not collide with each
+    // other. This does NOT protect against the same merchant reusing the
+    // same key for two genuinely different payments — see ADR-0013.
+    const dedupeId =
+      key !== undefined
+        ? `${DEDUPE_ID_PREFIX}${data.merchantId}:${key}`
+        : undefined;
+
     let result;
     try {
       result = await this.options.inngest.send({
         name: "payment/execute.requested",
         data,
+        ...(dedupeId !== undefined ? { id: dedupeId } : {}),
       });
     } catch (err) {
       throw new WorkflowEngineUnavailableError(

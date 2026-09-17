@@ -1,5 +1,6 @@
 import type { PaymentExecuteRequested } from "../../workflow/events.js";
 import type {
+  StartPaymentExecuteOptions,
   WorkflowRunSnapshot,
   WorkflowRuns,
 } from "../../ports/workflow-runs.js";
@@ -24,6 +25,8 @@ function randomUlidLike(): string {
  */
 export class FakeWorkflowRuns implements WorkflowRuns {
   readonly startCalls: PaymentExecuteRequested[] = [];
+  /** One entry per `startPaymentExecute` call, recording the `idempotencyKey` it was given (if any). */
+  readonly startKeys: (string | undefined)[] = [];
   readonly findCalls: string[] = [];
   private readonly scripted = new Map<
     string,
@@ -37,8 +40,10 @@ export class FakeWorkflowRuns implements WorkflowRuns {
 
   async startPaymentExecute(
     data: PaymentExecuteRequested,
+    options?: StartPaymentExecuteOptions,
   ): Promise<{ readonly eventId: string }> {
     this.startCalls.push(data);
+    this.startKeys.push(options?.idempotencyKey);
     return { eventId: randomUlidLike() };
   }
 

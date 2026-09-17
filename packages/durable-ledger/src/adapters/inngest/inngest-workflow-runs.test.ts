@@ -1,5 +1,5 @@
 import { Inngest } from "inngest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   startFakeInngestApi,
   type FakeInngestApiServer,
@@ -298,6 +298,157 @@ describe("InngestWorkflowRuns", () => {
         merchantId: "merchant_1",
       });
       expect(result).toEqual({ eventId: "evt_123" });
+    });
+
+    it("omits id entirely when no idempotencyKey is supplied", async () => {
+      server = await startFakeInngestApi();
+      const send = vi.fn().mockResolvedValue({ ids: ["evt_123"] });
+      const stubbedClient = { send } as unknown as Inngest;
+      const runs = new InngestWorkflowRuns({
+        inngest: stubbedClient,
+        apiBaseUrl: server.baseUrl,
+      });
+      const data = {
+        amount: 1000,
+        currency: "USD",
+        paymentMethodToken: "tok_visa",
+        merchantId: "merchant_1",
+      };
+
+      await runs.startPaymentExecute(data);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      const payload = send.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect("id" in payload).toBe(false);
+    });
+
+    it("sends the prefixed key as the Inngest event id", async () => {
+      server = await startFakeInngestApi();
+      const send = vi.fn().mockResolvedValue({ ids: ["evt_123"] });
+      const stubbedClient = { send } as unknown as Inngest;
+      const runs = new InngestWorkflowRuns({
+        inngest: stubbedClient,
+        apiBaseUrl: server.baseUrl,
+      });
+      const data = {
+        amount: 1000,
+        currency: "USD",
+        paymentMethodToken: "tok_visa",
+        merchantId: "merchant_1",
+      };
+
+      await runs.startPaymentExecute(data, { idempotencyKey: "some-key" });
+
+      expect(send).toHaveBeenCalledTimes(1);
+      const payload = send.mock.calls[0]?.[0] as {
+        id?: string;
+        data: unknown;
+      };
+      expect(payload.id).toBe("payment-execute:merchant_1:some-key");
+      expect(payload.data).toEqual(data);
+    });
+
+    it("namespaces the dedupe id by merchantId, so two different merchants with the same key don't collide", async () => {
+      server = await startFakeInngestApi();
+      const send = vi.fn().mockResolvedValue({ ids: ["evt_123"] });
+      const stubbedClient = { send } as unknown as Inngest;
+      const runs = new InngestWorkflowRuns({
+        inngest: stubbedClient,
+        apiBaseUrl: server.baseUrl,
+      });
+
+      await runs.startPaymentExecute(
+        {
+          amount: 1000,
+          currency: "USD",
+          paymentMethodToken: "tok_visa",
+          merchantId: "merchant_1",
+        },
+        { idempotencyKey: "same-key" },
+      );
+      await runs.startPaymentExecute(
+        {
+          amount: 1000,
+          currency: "USD",
+          paymentMethodToken: "tok_visa",
+          merchantId: "merchant_2",
+        },
+        { idempotencyKey: "same-key" },
+      );
+
+      expect(send).toHaveBeenCalledTimes(2);
+      const firstPayload = send.mock.calls[0]?.[0] as { id?: string };
+      const secondPayload = send.mock.calls[1]?.[0] as { id?: string };
+      expect(firstPayload.id).toBe("payment-execute:merchant_1:same-key");
+      expect(secondPayload.id).toBe("payment-execute:merchant_2:same-key");
+      expect(firstPayload.id).not.toBe(secondPayload.id);
+    });
+
+    it("rejects an idempotencyKey with an invalid shape (space) without calling send", async () => {
+      server = await startFakeInngestApi();
+      const send = vi.fn().mockResolvedValue({ ids: ["evt_123"] });
+      const stubbedClient = { send } as unknown as Inngest;
+      const runs = new InngestWorkflowRuns({
+        inngest: stubbedClient,
+        apiBaseUrl: server.baseUrl,
+      });
+      const data = {
+        amount: 1000,
+        currency: "USD",
+        paymentMethodToken: "tok_visa",
+        merchantId: "merchant_1",
+      };
+
+      await expect(
+        runs.startPaymentExecute(data, { idempotencyKey: "has a space" }),
+      ).rejects.toThrow(/invalid shape/);
+      await expect(
+        runs.startPaymentExecute(data, { idempotencyKey: "a".repeat(201) }),
+      ).rejects.toThrow(/invalid shape/);
+      await expect(
+        runs.startPaymentExecute(data, { idempotencyKey: "bad\x01key" }),
+      ).rejects.toThrow(/invalid shape/);
+
+      const shapeError = await runs
+        .startPaymentExecute(data, { idempotencyKey: "has a space" })
+        .catch((err: unknown) => err);
+      expect(shapeError).toBeInstanceOf(Error);
+      expect(shapeError).not.toBeInstanceOf(WorkflowEngineUnavailableError);
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("rejects a blank idempotencyKey without calling send", async () => {
+      server = await startFakeInngestApi();
+      const send = vi.fn().mockResolvedValue({ ids: ["evt_123"] });
+      const stubbedClient = { send } as unknown as Inngest;
+      const runs = new InngestWorkflowRuns({
+        inngest: stubbedClient,
+        apiBaseUrl: server.baseUrl,
+      });
+      const data = {
+        amount: 1000,
+        currency: "USD",
+        paymentMethodToken: "tok_visa",
+        merchantId: "merchant_1",
+      };
+
+      await expect(
+        runs.startPaymentExecute(data, { idempotencyKey: "" }),
+      ).rejects.toThrow(
+        "startPaymentExecute: idempotencyKey must not be blank",
+      );
+      await expect(
+        runs.startPaymentExecute(data, { idempotencyKey: "   " }),
+      ).rejects.toThrow(
+        "startPaymentExecute: idempotencyKey must not be blank",
+      );
+
+      const blankError = await runs
+        .startPaymentExecute(data, { idempotencyKey: "" })
+        .catch((err: unknown) => err);
+      expect(blankError).toBeInstanceOf(Error);
+      expect(blankError).not.toBeInstanceOf(WorkflowEngineUnavailableError);
+      expect(send).not.toHaveBeenCalled();
     });
   });
 });
