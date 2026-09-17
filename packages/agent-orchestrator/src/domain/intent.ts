@@ -41,15 +41,22 @@
  * round.
  *
  * Why `executing` is only reachable with a `durableLedgerEventId` already in
- * hand: this is the domain half of spec §6's exactly-once guarantee against
- * `durable-ledger`'s `POST /workflows/payment` not accepting an
- * `Idempotency-Key`. `autoApprove`/`approve` accept the id as a required
- * parameter and store it in the same mutation that flips `status` to
- * `executing` — there is no way to observe `status === "executing"` with a
- * null `durableLedgerEventId`. The other half of the guarantee (an atomic
- * check-and-persist so two concurrent calls into a use-case can't both pass
- * this guard for the same Intent) is a repository/use-case concern, landing
- * in spec steps 5/6, not here.
+ * hand: `autoApprove`/`approve` accept the id as a required parameter and
+ * write it in the very same mutation that flips `status` to `executing` —
+ * there is no way to observe `status === "executing"` with a null
+ * `durableLedgerEventId`, because the two fields are set atomically
+ * together, not in two steps that could drift apart. This holds
+ * independently of whether `durable-ledger` itself is idempotent — it now
+ * is, optionally, via a caller-supplied `Idempotency-Key` on
+ * `POST /workflows/payment` (`@apo/durable-ledger`'s ADR-0013), but that is
+ * a property of the OTHER side of the boundary, not of this atomic write.
+ * What this guarantees, on its own, is narrower and purely local: the handle
+ * to whatever workflow run was triggered and the record of having triggered
+ * it can never disagree with each other on a single `Intent`. Preventing
+ * two concurrent calls into a use-case from both passing this guard for the
+ * same `Intent` — the other half of spec §6's exactly-once requirement — is
+ * a repository/use-case concern (the optimistic-lock `version` check,
+ * spec steps 5/6), not something this class can enforce by itself.
  *
  * Why there is no `failureReason`/`rejectionReason` field: the cause of a
  * `rejected` intent is always derivable from the persisted row alone, via

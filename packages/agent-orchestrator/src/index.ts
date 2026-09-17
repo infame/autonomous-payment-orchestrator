@@ -5,8 +5,8 @@
  * `policy/` guardrail layer, the `LlmClient` port with its directive-driven
  * `MockLlmClient` adapter, the `AgentCoreClient` port, and the
  * `IntentRepository` port with its Postgres and in-memory adapters — plus
- * four of step 6's five `app/*` use-cases: `SubmitIntent`, `GetIntent`,
- * `AnswerClarification`, and `RejectIntent`.
+ * step 6 in full: all five `app/*` use-cases, `SubmitIntent`, `GetIntent`,
+ * `AnswerClarification`, `RejectIntent`, and `ApproveIntent`.
  *
  * `MockLlmClient` and its directive grammar ARE exported (unlike
  * `durable-ledger`'s test-only fakes) — `mock` is a real runtime mode for
@@ -15,10 +15,15 @@
  *
  * Not exported: `db.ts`/`mappers.ts`/`errors.ts`/`migrator.ts`/
  * `run-migrate.ts`/`test-support.ts` (internal to the Postgres adapter,
- * matching `durable-ledger`'s convention). Not exported because they don't
- * exist yet: the `ApproveIntent` use-case (rest of step 6); the HTTP/Hono
- * layer; the composition root, config, and `main.ts`; and `AgentCoreClient`
- * wiring into a use-case (step 8).
+ * matching `durable-ledger`'s convention); `adapters/http/
+ * fake-durable-ledger-server.ts` and `adapters/memory/
+ * fake-agent-core-client.ts` (test support only — there is no legitimate
+ * runtime mode where this package fakes the system that actually moves
+ * money, unlike `InMemoryIntentRepository`/`MockLlmClient` above). Not
+ * exported because they don't exist yet: `AnthropicLlmClient` (step 7); the
+ * HTTP/Hono layer, composition root, config, and `main.ts` (step 8) — which
+ * is also where `AgentCoreClient` gets wired into `ApproveIntent` behind a
+ * real route.
  */
 
 // Domain
@@ -44,6 +49,7 @@ export * from "./app/submit-intent.js";
 export * from "./app/get-intent.js";
 export * from "./app/answer-clarification.js";
 export * from "./app/reject-intent.js";
+export * from "./app/approve-intent.js";
 
 // Adapters
 export * from "./adapters/llm/directives.js";

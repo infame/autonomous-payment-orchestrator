@@ -38,13 +38,24 @@ import { OrchestratorError } from "../domain/errors.js";
  *
  * ## What this port does NOT guarantee
  *
- * The version check alone is NOT sufficient for exactly-once
- * `durable-ledger` calls (spec §6). A future use-case must claim (i.e.
- * conditionally `update`) the intent to `executing` BEFORE calling
- * `durable-ledger`, never after — and on an `IntentVersionConflictError`
- * from that claim, it must re-read the stored `durableLedgerEventId` and
- * return it rather than blindly retrying the call, or two racing callers
- * could each mint their own workflow run for the same intent.
+ * A "claim before calling durable-ledger" write is structurally impossible
+ * on this port: `Intent.approve`/`Intent.autoApprove` (`domain/intent.ts`)
+ * both require a real `durableLedgerEventId` as an argument before they'll
+ * allow the transition to `executing`, and the Postgres schema's
+ * `intents_executing_requires_event_id` CHECK constraint enforces the same
+ * rule at the storage boundary — neither will accept a placeholder. Only
+ * `durable-ledger` can mint that id, so the order is forced to be
+ * call-then-write, never claim-then-call: a use-case calls
+ * `AgentCoreClient.startPaymentWorkflow` first, and only then calls
+ * `update()` once with the real id in hand. The version-conditional
+ * `update(intent, expectedVersion)` this port already provides is what
+ * makes an approve and a concurrent reject mutually exclusive (whichever
+ * write lands first wins the version, and the loser's write fails outright)
+ * — but it says nothing about durable-ledger itself. Exactly-once
+ * protection against a duplicate EXTERNAL trigger (a retried HTTP call, a
+ * crash-and-retry, a redelivered queue message) now lives at the
+ * durable-ledger boundary, via a caller-supplied `Idempotency-Key`
+ * (ADR-0013 in `@apo/durable-ledger`), not in this repository or this port.
  */
 export interface StoredIntent {
   readonly intent: Intent;

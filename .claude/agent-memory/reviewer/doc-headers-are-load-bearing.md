@@ -119,3 +119,44 @@ importing across the `http/` ↔ `inngest/` module boundary. Related trap seen
 here: when an id is namespaced by concatenation (`prefix:${merchantId}:${key}`),
 check whether the delimiter can occur in either component — if both are
 free-form strings the namespace is ambiguous.
+
+**Fifth instance (2026-09-17, `feat/agent-orchestrator-approve-intent`):** a new
+failure pattern — **the test double hides the value the test needs to assert
+the contract**. `FakeAgentCoreClient` records `calls[] = {request,
+idempotencyKey}` but NOT the `eventId` it returned, and keeps its
+key→real-run map private. So the branch's centerpiece test ("a crash leaves
+the DUD eventId persisted, not the real one") could only assert
+`persisted === retried.eventId` + `runCount === 1` — both of which a naive
+"same key → same eventId" fake would also satisfy. The distinguishing
+assertion (`calls[0].eventId !== calls[1].eventId`) was impossible to write.
+**When reviewing any new in-process double: for each property its header
+claims to model, check the double exposes enough state to assert that
+property, and that the test actually asserts the distinguishing one.** Same
+smell shows up in a test whose *title* claims more than its body checks
+("durableLedgerEventId matches the fake's minted eventId" when the body only
+asserts `not.toBeNull()`).
+
+Two related recurring checks confirmed useful on the same branch:
+- **Cross-package doc quantifiers drift from the ADR they cite.** ADR-0013
+  says Inngest trigger dedup is a *bounded* guarantee ("holds only within
+  Inngest's event-retention window"); the consuming package's README/header
+  restated it as "at most one run ... ALWAYS". Compare quantifiers
+  ("always/never/completely") against the cited ADR's own hedges.
+- **Sibling-convention divergences need their own header section.** All other
+  `app/*` use-cases read `this.clock()` as the first line of `execute()`;
+  `ApproveIntent` reads it after the external call. The inline comment
+  deferred to a header section that explained call-vs-write ordering, not the
+  clock. A pointer to a section that doesn't cover the claim reads as
+  documented but isn't.
+
+**Re-review follow-up on the same branch (2026-09-17):** the fix for that last
+bullet introduced a *new* header inaccuracy — the added "Why `this.clock()` is
+read AFTER the external call" section justifies the divergence with "every
+other use-case reads its clock up front because nothing in front of their one
+write can take a variable, unbounded amount of time", but `SubmitIntent` and
+`AnswerClarification` both read `this.clock()` first and THEN `await
+this.llm.reason(...)`, which is exactly such a step (their real reason is that
+one `now` has to be shared across several domain transitions). **A rationale
+section written to satisfy a review comment is itself an unverified claim:
+when it compares this file to siblings, open the siblings.** Cheap heuristic
+that would have caught it: `grep -n "this.clock()" src/app/*.ts`.

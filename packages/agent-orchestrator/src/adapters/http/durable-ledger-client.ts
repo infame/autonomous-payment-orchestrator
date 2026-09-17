@@ -4,6 +4,7 @@ import type {
   AgentCoreClient,
   AgentCoreOperation,
   RequestOptions,
+  StartPaymentWorkflowOptions,
   StartPaymentWorkflowRequest,
   StartPaymentWorkflowResult,
   WorkflowRunSnapshot,
@@ -59,6 +60,15 @@ const workflowRunSnapshotSchema: ZodType<WorkflowRunSnapshot> = z.object({
   failureMessage: z.string().min(1).nullable(),
 });
 
+/**
+ * Same contract as durable-ledger's IDEMPOTENCY_KEY_SHAPE
+ * (src/adapters/inngest/inngest-workflow-runs.ts) and IdempotencyKeyHeader
+ * (src/adapters/http/server-schemas.ts). Duplicated deliberately — validate
+ * locally rather than trust a remote 400, same reasoning ADR-0013 gives for
+ * durable-ledger's own adapter-level duplication.
+ */
+const IDEMPOTENCY_KEY_SHAPE = /^[\x21-\x7E]{1,200}$/;
+
 interface RequestParams<T> {
   readonly operation: AgentCoreOperation;
   readonly method: "GET" | "POST";
@@ -67,6 +77,7 @@ interface RequestParams<T> {
   readonly schema: ZodType<T>;
   readonly timeoutMs: number | undefined;
   readonly signal: AbortSignal | undefined;
+  readonly idempotencyKey: string | undefined;
 }
 
 /**
@@ -91,7 +102,7 @@ export class HttpDurableLedgerClient implements AgentCoreClient {
 
   async startPaymentWorkflow(
     req: StartPaymentWorkflowRequest,
-    opts?: RequestOptions,
+    opts?: StartPaymentWorkflowOptions,
   ): Promise<StartPaymentWorkflowResult> {
     const result = await this.request({
       operation: "start_payment_workflow",
@@ -101,6 +112,7 @@ export class HttpDurableLedgerClient implements AgentCoreClient {
       schema: startPaymentWorkflowResponseSchema,
       timeoutMs: opts?.timeoutMs,
       signal: opts?.signal,
+      idempotencyKey: opts?.idempotencyKey,
     });
     return { eventId: result.eventId };
   }
@@ -117,6 +129,7 @@ export class HttpDurableLedgerClient implements AgentCoreClient {
       schema: workflowRunSnapshotSchema,
       timeoutMs: opts?.timeoutMs,
       signal: opts?.signal,
+      idempotencyKey: undefined,
     });
   }
 
@@ -127,6 +140,25 @@ export class HttpDurableLedgerClient implements AgentCoreClient {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
+    }
+
+    // Validated and set BEFORE any fetch call — never let an invalid key
+    // reach `fetch()` itself. A key containing a control character or a
+    // non-ASCII byte would make the real `fetch()` call throw a raw
+    // `TypeError` (invalid header value), which `classifyFetchError` below
+    // has no way to distinguish from a genuine transport failure — it would
+    // be mis-classified as a retryable `AgentCoreNetworkError`, turning a
+    // permanent caller bug (a malformed key) into an infinite retry loop.
+    // Local validation, matching durable-ledger's own adapter-level
+    // `IDEMPOTENCY_KEY_SHAPE` duplication (ADR-0013), closes that off.
+    if (params.idempotencyKey !== undefined) {
+      if (!IDEMPOTENCY_KEY_SHAPE.test(params.idempotencyKey)) {
+        throw new AgentCoreBadRequestError(
+          "idempotencyKey must be 1-200 printable ASCII characters with no spaces",
+          { operation, status: undefined, ledgerCode: undefined },
+        );
+      }
+      headers["Idempotency-Key"] = params.idempotencyKey;
     }
 
     const timeoutMs =

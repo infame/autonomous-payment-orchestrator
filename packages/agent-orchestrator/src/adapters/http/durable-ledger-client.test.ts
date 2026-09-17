@@ -46,6 +46,64 @@ describe("HttpDurableLedgerClient — happy paths", () => {
     expect(JSON.parse(req?.body ?? "{}")).toEqual(REQUEST);
   });
 
+  it("omits the Idempotency-Key header when no key is supplied — the header is opt-in, not automatic", async () => {
+    const client = new HttpDurableLedgerClient({ baseUrl: server.baseUrl });
+    await client.startPaymentWorkflow(REQUEST, {});
+
+    expect(server.requests).toHaveLength(1);
+    const req = server.requests[0];
+    expect(req?.headers["Idempotency-Key"]).toBeUndefined();
+  });
+
+  it("sends Idempotency-Key verbatim when supplied, and never inside the body", async () => {
+    const client = new HttpDurableLedgerClient({ baseUrl: server.baseUrl });
+    await client.startPaymentWorkflow(REQUEST, {
+      idempotencyKey: "intent_abc123",
+    });
+
+    expect(server.requests).toHaveLength(1);
+    const req = server.requests[0];
+    expect(req?.headers["Idempotency-Key"]).toBe("intent_abc123");
+    const rawBody = req?.body ?? "{}";
+    expect(JSON.parse(rawBody)).toEqual(REQUEST);
+    expect(rawBody).not.toContain("intent_abc123");
+  });
+
+  it("a blank (whitespace-only) idempotencyKey throws AgentCoreBadRequestError before any request is sent", async () => {
+    const client = new HttpDurableLedgerClient({ baseUrl: server.baseUrl });
+    await expect(
+      client.startPaymentWorkflow(REQUEST, { idempotencyKey: "   " }),
+    ).rejects.toBeInstanceOf(AgentCoreBadRequestError);
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it.each([
+    ["a control character", `bad\tkey`],
+    ["a 201-character string", "a".repeat(201)],
+    ["a non-ASCII character", "clé_intent_1"],
+  ])(
+    "a shape-violating idempotencyKey (%s) throws AgentCoreBadRequestError before any request is sent",
+    async (_label, key) => {
+      const client = new HttpDurableLedgerClient({ baseUrl: server.baseUrl });
+      await expect(
+        client.startPaymentWorkflow(REQUEST, { idempotencyKey: key }),
+      ).rejects.toBeInstanceOf(AgentCoreBadRequestError);
+      expect(server.requests).toHaveLength(0);
+    },
+  );
+
+  it("a shape-violating idempotencyKey's error message never contains the key value itself", async () => {
+    const client = new HttpDurableLedgerClient({ baseUrl: server.baseUrl });
+    const sentinelKey = "bad\tkey_sentinel_99999";
+    await expect(
+      client.startPaymentWorkflow(REQUEST, { idempotencyKey: sentinelKey }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect((err as Error).message).not.toContain(sentinelKey);
+      expect(JSON.stringify(err)).not.toContain(sentinelKey);
+      return true;
+    });
+  });
+
   it("a 202 resolves to {eventId} only — statusUrl does not leak onto the result", async () => {
     const client = new HttpDurableLedgerClient({ baseUrl: server.baseUrl });
     const result = await client.startPaymentWorkflow(REQUEST);
@@ -153,7 +211,7 @@ describe("HttpDurableLedgerClient — happy paths", () => {
     expect(getReq?.path).toBe(`/workflows/${encodeURIComponent(weirdId)}`);
   });
 
-  it("calling startPaymentWorkflow twice with an identical request produces two distinct event ids and two recorded requests — not idempotent, exactly-once lives on Intent", async () => {
+  it("calling startPaymentWorkflow twice with an identical request and NO idempotencyKey produces two distinct event ids and two recorded requests — with no key supplied, the wire call itself is not idempotent; exactly-once for a real ApproveIntent call is layered on via Intent.approve plus a caller-supplied idempotencyKey (ADR-0013)", async () => {
     const client = new HttpDurableLedgerClient({ baseUrl: server.baseUrl });
     const first = await client.startPaymentWorkflow(REQUEST);
     const second = await client.startPaymentWorkflow(REQUEST);

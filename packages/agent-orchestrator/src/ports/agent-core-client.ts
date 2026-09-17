@@ -23,23 +23,31 @@ import type { PaymentProposal } from "../domain/agent-proposal.js";
  * against a fake that itself transcribes the real routes (see that file's
  * header), not by a shared import.
  *
- * ## Stateless, no de-duplication
+ * ## Stateless, no de-duplication of its own — but the wire call itself is no
+ * longer un-idempotent
  *
- * `AgentCoreClient` performs NO caching or de-duplication of its own.
- * `Intent.autoApprove`/`Intent.approve` (`domain/intent.ts`) already require
- * a `durableLedgerEventId` argument before allowing the transition to
- * `executing`, and store it in the same mutation that flips `status` — that
- * is where this project's exactly-once guarantee against durable-ledger's
- * un-idempotent `POST /workflows/payment` actually lives (see that file's
- * header, "Why `executing` is only reachable with a `durableLedgerEventId`
- * already in hand"). A client-side cache here would be wrong-keyed anyway:
- * the only inputs visible at this layer are `{amount, currency, merchantId,
- * paymentMethodToken}`, never `Intent.id` — two different intents with the
- * same amount/currency/merchant/token are indistinguishable to a cache keyed
- * on request shape, and a process-local cache would not survive a restart
- * regardless. `startPaymentWorkflow` is documented, not hidden, as
- * not-idempotent — see `durable-ledger-client.test.ts`'s
- * "not idempotent" test.
+ * `AgentCoreClient` performs NO caching of its own. Since durable-ledger's
+ * ADR-0013 (`docs/adr/0013-optional-trigger-idempotency-key.md`),
+ * `POST /workflows/payment` accepts an optional
+ * `Idempotency-Key` header — a caller-supplied key that makes Inngest create
+ * AT MOST ONE workflow run no matter how many times the same key is sent
+ * (`StartPaymentWorkflowOptions.idempotencyKey` below). This client is still
+ * "stateless" in the sense that it holds no cache of its own to decide
+ * whether to send the header — that decision, and the key itself, come from
+ * the caller on every call. The domain's own rule — `Intent.autoApprove`/
+ * `Intent.approve` (`domain/intent.ts`) require a `durableLedgerEventId`
+ * argument before allowing the transition to `executing`, and store it in
+ * the same mutation that flips `status` — is a SECOND, independent layer,
+ * not the only protection: it guards against two concurrent USE-CASE calls
+ * both passing the "am I allowed to trigger this" check for the same
+ * `Intent`, which the durable-ledger-side key alone cannot do (it has no
+ * concept of `Intent` at all). Together the two layers close both halves of
+ * spec §6's exactly-once requirement; see `app/approve-intent.ts`'s header
+ * for the full accounting of what is (and isn't) still guaranteed. A
+ * client-side cache here would in any case be wrong-keyed: the only inputs
+ * visible at this layer are `{amount, currency, merchantId,
+ * paymentMethodToken}` plus the caller-supplied key, never `Intent.id`
+ * itself, and a process-local cache would not survive a restart regardless.
  *
  * ## No `waitForCompletion`/polling method
  *
@@ -125,11 +133,30 @@ export interface RequestOptions {
   readonly signal?: AbortSignal;
 }
 
+/**
+ * Widens startPaymentWorkflow's options only. Mirrors durable-ledger's
+ * StartPaymentExecuteOptions (src/ports/workflow-runs.ts), ADR-0013.
+ */
+export interface StartPaymentWorkflowOptions extends RequestOptions {
+  /**
+   * Caller-supplied de-duplication key, sent as the Idempotency-Key header
+   * and forwarded by durable-ledger to Inngest as the event id, namespaced
+   * payment-execute:<merchantId>:<key>. NOT pay-core's Idempotency-Key: no
+   * stored result is replayed, and a same-key/different-body retry is
+   * silently DISCARDED, not 409'd. NOT a lookup handle. Must never be
+   * derived from paymentMethodToken or any PII — visible in Inngest's
+   * dashboard. Implementations MUST validate the shape themselves
+   * (printable ASCII, no spaces/control chars, 1..200) and MUST reject a
+   * blank key rather than sending it.
+   */
+  readonly idempotencyKey?: string;
+}
+
 export interface AgentCoreClient {
   readonly name: string;
   startPaymentWorkflow(
     req: StartPaymentWorkflowRequest,
-    opts?: RequestOptions,
+    opts?: StartPaymentWorkflowOptions,
   ): Promise<StartPaymentWorkflowResult>;
   getRunStatus(
     eventId: string,

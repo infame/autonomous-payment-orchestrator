@@ -18,15 +18,15 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-5 of 9, plus four of step 6's five use-cases
+## Status: steps 1-6 of 9 complete
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
 `AgentCoreClient` port with its `durable-ledger` HTTP client, and the
 `IntentRepository` port with its Postgres and in-memory adapters — steps
-1-5 of the spec's own implementation order (§14) — plus `SubmitIntent`,
-`GetIntent`, `AnswerClarification`, and `RejectIntent`, four of step 6's
-five `app/*` use-cases:
+1-5 of the spec's own implementation order (§14) — plus all five of step
+6's `app/*` use-cases: `SubmitIntent`, `GetIntent`, `AnswerClarification`,
+`RejectIntent`, and `ApproveIntent`:
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -44,15 +44,16 @@ five `app/*` use-cases:
    its own `agent` Postgres schema/migration, `PgIntentRepository`, and
    `InMemoryIntentRepository`. See "Persistence & concurrency" below.
 6. `app/*` use-cases wiring domain, policy, LLM port, and repository
-   together. **`SubmitIntent`, `GetIntent`, `AnswerClarification`, and
-   `RejectIntent` exist** — see below. `ApproveIntent` does not yet.
+   together. **All five exist: `SubmitIntent`, `GetIntent`,
+   `AnswerClarification`, `RejectIntent`, and `ApproveIntent`** — see below.
 7. `adapters/llm/anthropic-llm-client.ts` — the real, live LLM adapter.
 8. A thin Hono HTTP layer + composition root + config + `main.ts`.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-Steps 7-9, and `ApproveIntent` (the rest of step 6), don't exist yet — no
-HTTP layer of this package's own, no composition root, no `AgentCoreClient`
-wiring into any use-case.
+Steps 7-9 don't exist yet — no HTTP layer of this package's own, no
+composition root, no `main.ts`. `AgentCoreClient` IS now wired into a
+use-case (`ApproveIntent`, below) — what's still missing is wiring
+`ApproveIntent` itself up behind a real HTTP route, which is step 8's job.
 
 ### `SubmitIntent` and `GetIntent` (step 6, first slice)
 
@@ -153,12 +154,62 @@ preventing a reject from clobbering a row that a concurrent (future)
 could land on top of an already-executing workflow, meaning money moved
 but the persisted record claims otherwise.
 
-**None of the four use-cases above scope by caller/customer yet** — each
+### `ApproveIntent`
+
+`ApproveIntent` (`src/app/approve-intent.ts`) is the single transition
+`needs_approval → executing`: it triggers a real durable-ledger payment
+workflow via `AgentCoreClient.startPaymentWorkflow`. It is the only
+use-case in this package that ever calls that port — the operation that
+actually moves money.
+
+**The exactly-once guarantee, precisely stated:** at most one durable-ledger
+workflow run is ever created per intent, ALWAYS — even under crashes,
+retries, or concurrent calls — **within Inngest's own event-retention
+window**. That qualifier is not this README hedging; it's ADR-0013's own
+Consequences section, verbatim: the guarantee is "bounded... not an
+absolute one," and the window itself "was not measured against Inngest
+Cloud," only against a local dev server. This holds because `ApproveIntent`
+supplies `intent.id` as durable-ledger's `Idempotency-Key`
+(`StartPaymentWorkflowOptions.idempotencyKey`, ADR-0013 in
+`@apo/durable-ledger`), and because a
+short-circuit on `intent.status === "executing"` (checked BEFORE any client
+call) makes a re-invocation on an already-triggered intent send no request
+at all. What is NOT guaranteed in every case is a CORRECT *handle* to that
+run: if this process crashes in the narrow window between durable-ledger
+accepting the trigger and this use-case's own confirming write landing, a
+later retry sends the same idempotency key again, gets back a different
+(permanently un-runnable, forever-`queued`) `eventId`, and THAT is the one
+that ends up persisted — the real run still happened, exactly once, but the
+stored `durableLedgerEventId` now points at a dud instead of it. This is
+**accepted, not fixed here**: no `workflow_runs` correlation table, no
+polling-harder logic. Money safety was the actual requirement; a
+correlation table to guarantee handle correctness too was explicitly
+declined in durable-ledger's own ADR-0010/ADR-0013 as disproportionate to
+the problem it would solve. A stuck `queued` status on an `executing`
+intent is the visible symptom, and the trigger for manual reconciliation,
+not a bug to chase.
+
+A version conflict on the confirming write is never allowed to silently
+drop the eventId this use-case just triggered: it's caught and rethrown as
+`ExecutionRaceLostError`, carrying that eventId forward, rather than a bare
+`IntentVersionConflictError` a caller might reasonably retry (retrying
+would just re-discover the intent already moved on, having thrown away the
+one piece of information that made the case worth distinguishing).
+
+**No caller/customer scoping — worded as forcefully as it needs to be.**
+`ApproveIntentCommand` carries no caller identity: anyone who knows an
+intent id can call this use-case and trigger a REAL payment against
+someone else's intent. This is not a hypothetical gap; it is the single
+most important thing to close, at the future HTTP/auth layer (step 8),
+before this use-case is ever wired up as `POST /intents/:id/approve`.
+
+**None of the five use-cases above scope by caller/customer yet** — each
 takes a bare `intentId` (or, for `SubmitIntent`, a caller-supplied
 `customerId` that nothing cross-checks against an authenticated identity).
-For `GetIntent` that's a read-only gap; for `AnswerClarification` and
-`RejectIntent` it means anyone holding an intent id can steer or terminate
-someone else's pending payment. This is deliberately deferred to the
+For `GetIntent` that's a read-only gap; for `AnswerClarification`,
+`RejectIntent`, and — most importantly — `ApproveIntent`, it means anyone
+holding an intent id can steer, terminate, or trigger real money movement
+on someone else's pending payment. This is deliberately deferred to the
 future HTTP/auth layer (step 8), same stage `durable-ledger` was at before
 its own HTTP layer landed — but it must be closed there before any of
 these use-cases are reachable over the network.
@@ -195,12 +246,17 @@ Four things worth knowing about the shape of this port:
   `merchant:<id>` — there is no customer-side ledger account for it to
   reach. `customerId` stays a local field on this package's side of the
   boundary.
-- **The client is stateless: no de-duplication, no polling.** It performs no
-  caching of its own — `Intent.autoApprove`/`Intent.approve`
-  (`domain/intent.ts`) already require a `durableLedgerEventId` before
-  allowing the transition to `executing`, and that is where this project's
-  exactly-once guarantee against durable-ledger's un-idempotent
-  `POST /workflows/payment` actually lives. There is also no blocking
+- **The client caches nothing itself, but the wire call is no longer
+  un-idempotent.** Since durable-ledger's ADR-0013, `POST /workflows/payment`
+  accepts an optional `Idempotency-Key` header
+  (`StartPaymentWorkflowOptions.idempotencyKey`): a caller-supplied key makes
+  Inngest create at most one workflow run no matter how many times the same
+  key is sent. `ApproveIntent` (below) supplies `intent.id` as that key.
+  `Intent.autoApprove`/`Intent.approve` (`domain/intent.ts`) requiring a
+  `durableLedgerEventId` before allowing the transition to `executing` is a
+  SECOND, independent layer — it guards against two concurrent use-case
+  calls both passing the same `Intent`'s own guard, which the durable-ledger
+  key alone has no way to know about. There is also no blocking
   `waitForCompletion` method: `getRunStatus` is a single HTTP call, matching
   spec §7's requirement that `POST /intents` must not block until a workflow
   finishes.
@@ -213,10 +269,19 @@ Four things worth knowing about the shape of this port:
   instead — collapsing those into "run not found" would disguise a
   base-URL misconfiguration as a domain outcome.
 
-Not built in this step, by design (decision C of the plan this step came
-from): a `FakeAgentCoreClient` in-process port double. This step's own tests
-are covered by the HTTP fake server; an in-process double is a future
-use-case step's job, once there's a use-case to test against it.
+`src/adapters/memory/fake-agent-core-client.ts` — built once `ApproveIntent`
+(below) actually needed an `AgentCoreClient` double to test against — is an
+in-process port double, distinct from the HTTP fake server above: that fake
+exercises `HttpDurableLedgerClient`'s own request/response/error-classification
+wiring over a real socket, while this one lets an `app/*` use-case test
+assert on calls directly with no HTTP involved at all. It is deliberately
+NOT a trivial stub: it mints a fresh `eventId` on every `startPaymentWorkflow`
+call, but only creates a genuine new run the first time a given
+`idempotencyKey` is seen — modeling ADR-0013's empirically-verified Inngest
+dedup behavior, including the "dud handle" case (a later call with an
+already-seen key gets back a real-looking but permanently un-runnable
+`eventId`). Test support only, not exported — same reasoning as the HTTP
+fake server above.
 
 ## The domain model
 
@@ -345,9 +410,12 @@ which has none.
   That gets every implementation — Postgres AND in-memory — real locking
   for free, with no hidden per-instance state. See
   `ports/intent-repository.ts`'s header for the full rationale, including
-  why the version check alone is not sufficient for durable-ledger's
-  exactly-once guarantee (spec §6) — a future use-case must claim the
-  intent before calling out, not after.
+  why a "claim before calling durable-ledger" write is structurally
+  impossible on this port (the domain and a DB `CHECK` constraint both
+  require a real `durableLedgerEventId` only durable-ledger can mint) and
+  why the version check's role is narrower than that: it makes an approve
+  and a reject on the same `Intent` mutually exclusive, not exactly-once
+  against durable-ledger itself — see `ApproveIntent` below for that half.
 - **`agent` is its own Postgres schema**, not `public` (pay-core's) or
   `ledger` (durable-ledger's) — this is the third package sharing one
   Postgres instance (`docker-compose.yml`). Its own schema gives namespace
@@ -377,10 +445,16 @@ which has none.
   optimistic-lock version check**, not by any row lock. `RejectIntent`'s
   conditional `update(intent, expectedVersion)` call — the equivalent of
   `UPDATE ... WHERE id = $1 AND version = $2` — is the entire mechanism
-  stopping a reject from clobbering a row a concurrent (future)
-  `ApproveIntent` has already moved to `executing`. This is exactly why
-  that write must never become unconditional, and why a version conflict
-  on it must never be retried-and-forced through.
+  stopping a reject from clobbering a row `ApproveIntent` has already moved
+  to `executing`, and vice versa. This is one of two layers, not the only
+  one: it is what makes approve/reject mutually exclusive on THIS side of
+  the boundary, but exactly-once protection against a duplicate
+  durable-ledger trigger (a retried call, a crash-and-retry) is a second,
+  independent layer living at the durable-ledger boundary itself
+  (`Idempotency-Key`, ADR-0013) — see `ApproveIntent` below for the full
+  accounting. This is exactly why the conditional write must never become
+  unconditional, and why a version conflict on it must never be
+  retried-and-forced through.
 
 ## Why there's no `pay-core` client at all
 
@@ -439,7 +513,7 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `app/*`: `SubmitIntent`, `GetIntent`
 - [x] `app/*`: `AnswerClarification`
 - [x] `app/*`: `RejectIntent`
-- [ ] `app/*`: `ApproveIntent`
+- [x] `app/*`: `ApproveIntent`
 - [ ] `AnthropicLlmClient` (live)
 - [ ] Hono HTTP layer + composition root + config + `main.ts`
 - [ ] End-to-end demo scenario

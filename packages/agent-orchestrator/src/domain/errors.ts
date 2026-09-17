@@ -52,3 +52,7 @@ export class IntentNotFoundError extends OrchestratorError {
 //   normal return value (`PolicyVerdict`), never thrown.
 // - `LlmUnavailableError` — a port error, belongs with the `LlmClient` port
 //   (spec step 3), not the domain.
+// - `ExecutionRaceLostError` — lives in `app/approve-intent.ts`, not here.
+//   It's about an orphaned durable-ledger handle (a use-case/persistence
+//   concern), not a domain concept `Intent`/`AgentProposal` enforce on
+//   themselves.
