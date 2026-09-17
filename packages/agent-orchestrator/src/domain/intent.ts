@@ -24,6 +24,22 @@
  * `rejected`, not re-asked — spec §3.1's explicitly recorded simplification,
  * not a forgotten edge.
  *
+ * `recordClarificationAnswer` is deliberately NOT one of the transitions
+ * above: it stores the user's answer to a clarification question but leaves
+ * `status` at `needs_clarification` — the actual `needs_clarification →
+ * proposed | rejected` transition still happens separately (via `propose`/
+ * `declineByAgent`), once a use-case has re-asked the `LlmClient` with the
+ * answer in hand. It's legal only from `needs_clarification`, and it can be
+ * called at most once per intent (a second call throws `InvalidIntentError`,
+ * not `InvalidIntentStateError` — the status hasn't changed, so a "wrong
+ * state" error would be misleading). Once answered, re-entry into
+ * `needs_clarification` is structurally impossible — there is no transition
+ * back into it from anywhere — so the "already set" guard, combined with the
+ * status check, is sufficient on its own; no version/sequence field is
+ * needed to prevent a stale double-write. This mirrors spec §3.1's "only one
+ * round" rule for `clarify` itself, applied to the answer side of that same
+ * round.
+ *
  * Why `executing` is only reachable with a `durableLedgerEventId` already in
  * hand: this is the domain half of spec §6's exactly-once guarantee against
  * `durable-ledger`'s `POST /workflows/payment` not accepting an
@@ -100,6 +116,8 @@ export function isIntentStatus(value: string): value is IntentStatus {
 
 export const MAX_INTENT_TEXT_LENGTH = 10_000;
 
+export const MAX_CLARIFICATION_ANSWER_LENGTH = 2_000;
+
 /** Same shape as `durable-ledger`'s account-subject ids: a reasonable, bounded id, not free text. */
 export const CUSTOMER_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -111,6 +129,7 @@ export interface IntentProps {
   proposal: AgentProposal | null;
   policyVerdict: PolicyVerdict | null;
   durableLedgerEventId: string | null;
+  clarificationAnswer: string | null;
   readonly createdAt: Date;
   updatedAt: Date;
 }
@@ -153,6 +172,7 @@ export class Intent {
       proposal: null,
       policyVerdict: null,
       durableLedgerEventId: null,
+      clarificationAnswer: null,
       createdAt: now,
       updatedAt: now,
     });
@@ -170,6 +190,33 @@ export class Intent {
     this.assertStatus(["received"], "clarify");
     this.props.status = "needs_clarification";
     this.props.proposal = proposal;
+    this.touch(now);
+  }
+
+  /**
+   * Records the user's answer to a clarification question. NOT a status
+   * transition — `status` stays `needs_clarification`; see class header for
+   * why. Legal only from `needs_clarification`, and only once: a second call
+   * throws `InvalidIntentError` (the answer is already set), not
+   * `InvalidIntentStateError` (the status guard already passed). Stores
+   * `answer` verbatim (untrimmed) — the trim is only used to validate
+   * blankness/length, mirroring `Intent.submit`'s treatment of `text`.
+   */
+  recordClarificationAnswer(answer: string, now: Date = new Date()): void {
+    this.assertStatus(["needs_clarification"], "recordClarificationAnswer");
+    if (this.props.clarificationAnswer !== null) {
+      throw new InvalidIntentError("clarificationAnswer is already set");
+    }
+    const trimmed = answer.trim();
+    if (trimmed.length === 0) {
+      throw new InvalidIntentError("clarificationAnswer must not be empty");
+    }
+    if (trimmed.length > MAX_CLARIFICATION_ANSWER_LENGTH) {
+      throw new InvalidIntentError(
+        `clarificationAnswer must be at most ${String(MAX_CLARIFICATION_ANSWER_LENGTH)} characters, got ${String(trimmed.length)}`,
+      );
+    }
+    this.props.clarificationAnswer = answer;
     this.touch(now);
   }
 
@@ -303,6 +350,9 @@ export class Intent {
   }
   get durableLedgerEventId(): string | null {
     return this.props.durableLedgerEventId;
+  }
+  get clarificationAnswer(): string | null {
+    return this.props.clarificationAnswer;
   }
   get createdAt(): Date {
     return this.props.createdAt;

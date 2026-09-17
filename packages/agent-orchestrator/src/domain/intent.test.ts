@@ -10,6 +10,7 @@ import {
   Intent,
   TERMINAL_INTENT_STATUSES,
   MAX_INTENT_TEXT_LENGTH,
+  MAX_CLARIFICATION_ANSWER_LENGTH,
 } from "./intent.js";
 import type {
   AllowVerdict,
@@ -166,6 +167,7 @@ describe("Intent.fromState", () => {
       proposal: null,
       policyVerdict: null,
       durableLedgerEventId: null,
+      clarificationAnswer: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -287,6 +289,7 @@ describe("Intent legal transitions", () => {
 describe("Intent illegal transitions", () => {
   const methodCalls: Record<string, (intent: Intent) => void> = {
     clarify: (i) => i.clarify(clarifyProposal("q")),
+    recordClarificationAnswer: (i) => i.recordClarificationAnswer("answer"),
     propose: (i) => i.propose(proposal),
     declineByAgent: (i) => i.declineByAgent(declineProposal("no")),
     requireApproval: (i) => i.requireApproval(needsApprovalVerdict),
@@ -302,6 +305,7 @@ describe("Intent illegal transitions", () => {
 
   const allowedFrom: Record<string, readonly IntentStatus[]> = {
     clarify: ["received"],
+    recordClarificationAnswer: ["needs_clarification"],
     propose: ["received", "needs_clarification"],
     declineByAgent: ["received", "needs_clarification"],
     requireApproval: ["proposed"],
@@ -353,6 +357,51 @@ describe("only one clarification round", () => {
     expect(() => intent.clarify(clarifyProposal("Which one again?"))).toThrow(
       InvalidIntentStateError,
     );
+  });
+});
+
+describe("recordClarificationAnswer", () => {
+  it("stores the answer verbatim from needs_clarification, status unchanged, updatedAt advances", () => {
+    const intent = submit();
+    intent.clarify(clarifyProposal("Which invoice?"));
+    const before = intent.updatedAt;
+    const now = new Date(before.getTime() + 1000);
+    intent.recordClarificationAnswer("Invoice #123, $50.00", now);
+
+    expect(intent.status).toBe("needs_clarification");
+    expect(intent.clarificationAnswer).toBe("Invoice #123, $50.00");
+    expect(intent.updatedAt).toEqual(now);
+  });
+
+  it("throws InvalidIntentError on a second call, leaving the first answer unchanged", () => {
+    const intent = submit();
+    intent.clarify(clarifyProposal("Which invoice?"));
+    intent.recordClarificationAnswer("Invoice #123");
+
+    expect(() => intent.recordClarificationAnswer("Invoice #456")).toThrow(
+      InvalidIntentError,
+    );
+    expect(intent.clarificationAnswer).toBe("Invoice #123");
+  });
+
+  it("throws InvalidIntentError on a blank answer (after trim)", () => {
+    const intent = submit();
+    intent.clarify(clarifyProposal("Which invoice?"));
+    expect(() => intent.recordClarificationAnswer("   ")).toThrow(
+      InvalidIntentError,
+    );
+    expect(intent.clarificationAnswer).toBeNull();
+  });
+
+  it("throws InvalidIntentError on an answer over the max length", () => {
+    const intent = submit();
+    intent.clarify(clarifyProposal("Which invoice?"));
+    expect(() =>
+      intent.recordClarificationAnswer(
+        "x".repeat(MAX_CLARIFICATION_ANSWER_LENGTH + 1),
+      ),
+    ).toThrow(InvalidIntentError);
+    expect(intent.clarificationAnswer).toBeNull();
   });
 });
 
@@ -419,6 +468,16 @@ describe("toState", () => {
     intent.clarify(clarifyProposal("Which invoice?"));
     expect(state.status).toBe("received");
     expect(intent.status).toBe("needs_clarification");
+  });
+
+  it("carries clarificationAnswer through a toState()/fromState() round-trip", () => {
+    const intent = submit();
+    intent.clarify(clarifyProposal("Which invoice?"));
+    intent.recordClarificationAnswer("Invoice #123, $50.00");
+
+    const rehydrated = Intent.fromState(intent.toState());
+    expect(rehydrated.clarificationAnswer).toBe("Invoice #123, $50.00");
+    expect(rehydrated.status).toBe("needs_clarification");
   });
 });
 

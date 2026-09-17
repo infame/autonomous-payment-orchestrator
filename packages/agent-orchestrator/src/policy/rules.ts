@@ -18,6 +18,9 @@ export const DEFAULT_POLICY_CONFIG: PolicyConfig = {
   dailyRateLimit: 10,
 };
 
+/** Trailing window `IntentRepository.countCompletedSince` is queried over, for `dailyRateLimit` above. */
+export const DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Currencies whose minor unit isn't 1/100th of the major unit (no decimal
  * places at all, in these cases). `extractGroundedAmounts`'s ×100

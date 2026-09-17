@@ -24,6 +24,7 @@ export interface IntentView {
   readonly proposal: AgentProposal | null;
   readonly policyVerdict: PolicyVerdict | null;
   readonly durableLedgerEventId: string | null;
+  readonly clarificationAnswer: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -38,6 +39,7 @@ export function toIntentView(intent: Intent): IntentView {
     proposal: intent.proposal,
     policyVerdict: intent.policyVerdict,
     durableLedgerEventId: intent.durableLedgerEventId,
+    clarificationAnswer: intent.clarificationAnswer,
     createdAt: intent.createdAt,
     updatedAt: intent.updatedAt,
   };

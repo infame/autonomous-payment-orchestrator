@@ -34,6 +34,7 @@ describe.skipIf(!hasTestDb)("agent.intents schema (integration)", () => {
       proposal: null,
       policyVerdict: null,
       durableLedgerEventId: null,
+      clarificationAnswer: null,
       version: 1,
       ...overrides,
     };
@@ -90,9 +91,31 @@ describe.skipIf(!hasTestDb)("agent.intents schema (integration)", () => {
       expect(found?.proposal).toEqual(row.proposal);
       expect(found?.policyVerdict).toBeNull();
       expect(found?.durableLedgerEventId).toBeNull();
+      expect(found?.clarificationAnswer).toBeNull();
       expect(found?.version).toBe(3);
       expect(found?.createdAt).toBeInstanceOf(Date);
       expect(found?.updatedAt).toBeInstanceOf(Date);
+    });
+
+    it("preserves a non-null clarificationAnswer through insert + select", async () => {
+      const row = baseRow({
+        status: "proposed",
+        proposal: {
+          kind: "propose_payment",
+          amount: 5_000,
+          currency: "USD",
+          merchantId: "vendor-42",
+          reasoning: "x",
+        },
+        clarificationAnswer: "Invoice #123, $50.00",
+      });
+      await db.insert(intents).values(row);
+
+      const rows = await db
+        .select()
+        .from(intents)
+        .where(eq(intents.id, row.id));
+      expect(rows[0]?.clarificationAnswer).toBe("Invoice #123, $50.00");
     });
   });
 
@@ -171,6 +194,99 @@ describe.skipIf(!hasTestDb)("agent.intents schema (integration)", () => {
         },
         durableLedgerEventId: "evt_1",
       });
+      await db.insert(intents).values(row);
+      const rows = await db
+        .select()
+        .from(intents)
+        .where(eq(intents.id, row.id));
+      expect(rows).toHaveLength(1);
+    });
+
+    it("rejects a whitespace-only clarification_answer (intents_clarification_answer_bounded)", async () => {
+      await expectConstraintViolation(
+        db.insert(intents).values(
+          baseRow({
+            status: "proposed",
+            proposal: {
+              kind: "propose_payment",
+              amount: 100,
+              currency: "USD",
+              merchantId: "vendor-42",
+              reasoning: "x",
+            },
+            clarificationAnswer: "   ",
+          }),
+        ),
+        "intents_clarification_answer_bounded",
+      );
+    });
+
+    it("rejects a clarification_answer over 2000 characters after trimming (intents_clarification_answer_bounded)", async () => {
+      await expectConstraintViolation(
+        db.insert(intents).values(
+          baseRow({
+            status: "proposed",
+            proposal: {
+              kind: "propose_payment",
+              amount: 100,
+              currency: "USD",
+              merchantId: "vendor-42",
+              reasoning: "x",
+            },
+            clarificationAnswer: "x".repeat(2_001),
+          }),
+        ),
+        "intents_clarification_answer_bounded",
+      );
+    });
+
+    it("rejects a clarification_answer present while status is 'received' (intents_clarification_answer_requires_resolution)", async () => {
+      await expectConstraintViolation(
+        db.insert(intents).values(
+          baseRow({
+            status: "received",
+            clarificationAnswer: "Invoice #123, $50.00",
+          }),
+        ),
+        "intents_clarification_answer_requires_resolution",
+      );
+    });
+
+    it("rejects a clarification_answer present while status is 'needs_clarification' (intents_clarification_answer_requires_resolution)", async () => {
+      await expectConstraintViolation(
+        db.insert(intents).values(
+          baseRow({
+            status: "needs_clarification",
+            proposal: { kind: "clarify", question: "Which invoice?" },
+            clarificationAnswer: "Invoice #123, $50.00",
+          }),
+        ),
+        "intents_clarification_answer_requires_resolution",
+      );
+    });
+
+    it("accepts a non-null clarification_answer with status='proposed' (positive control)", async () => {
+      const row = baseRow({
+        status: "proposed",
+        proposal: {
+          kind: "propose_payment",
+          amount: 100,
+          currency: "USD",
+          merchantId: "vendor-42",
+          reasoning: "x",
+        },
+        clarificationAnswer: "Invoice #123, $50.00",
+      });
+      await db.insert(intents).values(row);
+      const rows = await db
+        .select()
+        .from(intents)
+        .where(eq(intents.id, row.id));
+      expect(rows).toHaveLength(1);
+    });
+
+    it("accepts a NULL clarification_answer for any status (positive control)", async () => {
+      const row = baseRow({ status: "received", clarificationAnswer: null });
       await db.insert(intents).values(row);
       const rows = await db
         .select()

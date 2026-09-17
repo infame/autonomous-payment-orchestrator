@@ -99,6 +99,26 @@ describe.skipIf(!hasTestDb)("PgIntentRepository (integration)", () => {
       expect(found?.intent.status).toBe("received");
     });
 
+    it("persists a newly-set clarificationAnswer (guards update()'s column allow-list)", async () => {
+      const id = randomUUID();
+      const created = await repo.create(submit(id));
+
+      // `intents_clarification_answer_requires_resolution` forbids a
+      // persisted row from carrying an answer while still
+      // `needs_clarification` — mirror `AnswerClarification`'s real
+      // single-write shape: record the answer, transition, THEN write once.
+      const intent = created.intent;
+      intent.clarify(clarifyProposal("Which invoice?"));
+      intent.recordClarificationAnswer("Invoice #123, $50.00");
+      intent.propose(proposal);
+      const updated = await repo.update(intent, created.version);
+      expect(updated.intent.clarificationAnswer).toBe("Invoice #123, $50.00");
+
+      const found = await repo.findById(id);
+      expect(found?.intent.clarificationAnswer).toBe("Invoice #123, $50.00");
+      expect(found?.intent.status).toBe("proposed");
+    });
+
     it("a full lifecycle round-trip preserves proposal/policyVerdict/durableLedgerEventId/timestamps", async () => {
       const id = randomUUID();
       const t0 = new Date("2026-01-01T00:00:00Z");

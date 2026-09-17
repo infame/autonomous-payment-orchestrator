@@ -8,6 +8,13 @@
       "when": 1789589501177,
       "tag": "0000_awesome_miracleman",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789604861899,
+      "tag": "0001_flawless_purifiers",
+      "breakpoints": true
     }
   ]
 }

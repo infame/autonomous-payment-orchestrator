@@ -33,6 +33,7 @@ export function intentToRow(intent: Intent, version: number): NewIntentRow {
     proposal: state.proposal,
     policyVerdict: state.policyVerdict,
     durableLedgerEventId: state.durableLedgerEventId,
+    clarificationAnswer: state.clarificationAnswer,
     version,
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
@@ -54,6 +55,7 @@ export function rowToIntent(row: IntentRow): Intent {
     proposal: parseProposal(row.proposal),
     policyVerdict: parsePolicyVerdict(row.policyVerdict),
     durableLedgerEventId: row.durableLedgerEventId,
+    clarificationAnswer: row.clarificationAnswer,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });

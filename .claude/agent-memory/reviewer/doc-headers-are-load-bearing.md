@@ -37,3 +37,17 @@ would have been written against the false claim.
   union and serialize only the discriminator; it typechecks and lints clean.
 
 See [[verify-db-claims-by-running]] for the same lesson on the persistence side.
+
+**Second instance (2026-09-16, `feat/agent-orchestrator-answer-clarification`):**
+headers here increasingly argue *why an alternative design would be wrong*
+("relying on `propose()`'s guard would silently succeed for a `received`
+intent"). That counterfactual is itself a contract claim and is the one most
+likely to be untested — the use-case test covered a `proposed` intent, which
+both designs reject, so it did not distinguish them. When a header says "X
+would be wrong", find the test that exercises exactly X's distinguishing
+input, not a neighbouring one.
+
+Related convention worth checking on every new `app/*` use-case: the README
+records that `GetIntent` "does not yet scope by caller/customer (deferred to
+the future HTTP/auth layer)". A new *mutating* use-case that inherits that gap
+must restate it — in this codebase silence in a header reads as "handled".

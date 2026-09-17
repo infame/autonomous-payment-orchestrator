@@ -74,6 +74,7 @@ export class PgIntentRepository implements IntentRepository {
         proposal: row.proposal,
         policyVerdict: row.policyVerdict,
         durableLedgerEventId: row.durableLedgerEventId,
+        clarificationAnswer: row.clarificationAnswer,
         version: row.version,
         updatedAt: row.updatedAt,
       })

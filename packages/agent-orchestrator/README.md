@@ -18,14 +18,15 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-5 of 9, plus the first slice of step 6
+## Status: steps 1-5 of 9, plus three of step 6's five use-cases
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
 `AgentCoreClient` port with its `durable-ledger` HTTP client, and the
 `IntentRepository` port with its Postgres and in-memory adapters — steps
-1-5 of the spec's own implementation order (§14) — plus `SubmitIntent` and
-`GetIntent`, the first two of step 6's five `app/*` use-cases:
+1-5 of the spec's own implementation order (§14) — plus `SubmitIntent`,
+`GetIntent`, and `AnswerClarification`, three of step 6's five `app/*`
+use-cases:
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -43,9 +44,8 @@ policy layer, the `LlmClient` port with its mock adapter, the
    its own `agent` Postgres schema/migration, `PgIntentRepository`, and
    `InMemoryIntentRepository`. See "Persistence & concurrency" below.
 6. `app/*` use-cases wiring domain, policy, LLM port, and repository
-   together. **`SubmitIntent` and `GetIntent` exist (this step, first
-   slice)** — see below. `AnswerClarification`, `ApproveIntent`, and
-   `RejectIntent` do not yet.
+   together. **`SubmitIntent`, `GetIntent`, and `AnswerClarification`
+   exist** — see below. `ApproveIntent` and `RejectIntent` do not yet.
 7. `adapters/llm/anthropic-llm-client.ts` — the real, live LLM adapter.
 8. A thin Hono HTTP layer + composition root + config + `main.ts`.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
@@ -73,6 +73,44 @@ then regardless. `GetIntent` (`src/app/get-intent.ts`) is a straight
 `findById` → `IntentNotFoundError` on miss → read-only `IntentView`;
 it does not yet scope by caller/customer (deferred to the future HTTP/auth
 layer, same as `durable-ledger`'s equivalent gaps were at this stage).
+
+Both this use-case and `AnswerClarification` (below) share their policy
+wiring through `applyPolicy` (`src/app/apply-policy.ts`) — the single place
+that builds `PolicyContext` (including `countCompletedSince` and
+`clarificationAnswer`) and applies a `needs_approval`/`reject` verdict onto
+the intent. Extracting it keeps a future caller from forgetting to wire in
+`clarificationAnswer`.
+
+### `AnswerClarification`
+
+`AnswerClarification` (`src/app/answer-clarification.ts`) resolves a
+pending clarification: it records the customer's answer onto the `Intent`
+(`Intent.recordClarificationAnswer` — legal only from `needs_clarification`,
+and only once), re-asks the `LlmClient` with the answer in hand, and routes
+the result exactly like `SubmitIntent` does. Only **one** round of
+clarification is allowed (spec §3.1): the three reachable statuses are
+`proposed`, `needs_approval`, and `rejected` — never `needs_clarification`
+again. If the LLM's second-round proposal is itself another `clarify`, it
+is mapped to a synthetic, fixed-string decline instead of being surfaced —
+the model's actual second `question` text is never echoed into that
+decline reason, matching this codebase's convention that error/decline
+messages never carry LLM-authored free text derived from customer input.
+This use-case performs exactly one repository write
+(`IntentRepository.update`), and an `IntentVersionConflictError` from that
+call propagates uncaught with no retry: the only realistic trigger is two
+concurrent answers to the same intent, and a retry would just re-read the
+now-resolved intent and throw `InvalidIntentStateError` after wastefully
+paying for a second LLM call — trading one error for another, never
+succeeding.
+
+The clarification answer **widens the grounded-amount set by design**
+(spec §4): a user can ground any amount by typing it into their answer, and
+that is intentional, not a guardrail bypass. `amountMustBeGrounded` is a
+fabrication guard against the *model* inventing an amount out of thin air —
+it has nothing to say about whether a human-supplied number is
+*authorized*. `maxAutoApproveAmount`/`maxHardLimitAmount` are what actually
+bound a human-supplied number, and both still run unchanged against
+whatever amount the answer grounds.
 
 ## `AgentCoreClient` and `HttpDurableLedgerClient`
 
@@ -147,11 +185,17 @@ human-readable fields (`reasoning`/`question`/`reason`) are validated for
 shape (non-empty, bounded length) but their *content* is never read by the
 policy layer — see below.
 
-`Intent` does not persist the user's answer to a clarification question as
-its own field. That's a real, acknowledged audit-trail gap for v1: the
-answer gets threaded live into `evaluatePolicy`'s `PolicyContext` once the
-use-case layer exists (step 6), but nothing on `Intent` records it after
-the fact. Recorded here rather than left implicit.
+`Intent` records the user's answer to a clarification question as its own
+field (`clarificationAnswer`, via `Intent.recordClarificationAnswer`) —
+closing a previously-acknowledged audit-trail gap: a proposal grounded in
+the user's answer is now reproducible from storage, not just threaded live
+into `evaluatePolicy`'s `PolicyContext` and then forgotten.
+`recordClarificationAnswer` is deliberately NOT a status transition —
+`status` stays `needs_clarification` while it runs; the actual
+`needs_clarification → proposed | rejected` transition still happens
+separately, once `AnswerClarification` has re-asked the `LlmClient`. See
+the method's own doc comment in `src/domain/intent.ts` for the full set-once
+reasoning.
 
 ## Why the policy layer is separate — from both the LLM and the use-cases
 
@@ -261,6 +305,23 @@ which has none.
   (`agent.__drizzle_migrations` is separate from the other two packages',
   so applying one package's migrations never marks another's as applied).
   See `schema.ts`'s header comment for the full rationale.
+- **`clarification_answer` is a nullable `text` column** with two `CHECK`
+  constraints: `intents_clarification_answer_bounded` (non-blank and
+  ≤2,000 chars *when present* — a `NULL` always passes, since a SQL `CHECK`
+  only fails on `FALSE`, never on `NULL`/`UNKNOWN`) and
+  `intents_clarification_answer_requires_resolution` (an answer can never be
+  persisted while `status` is still `received`/`needs_clarification` — the
+  DB-side mirror of `AnswerClarification`'s single-write shape: record the
+  answer, transition, THEN write once, never a two-write "persist the
+  answer, then later persist the transition" shape). Unlike
+  `durable_ledger_event_id`'s set-once trigger, there is **no** set-once
+  trigger on `clarification_answer`: that trigger guards an exactly-once
+  *external* side effect (a duplicate `durable-ledger` workflow run is real
+  money moved twice), whereas `clarification_answer` is an audit-fidelity
+  concern that's already fully prevented by the status machine (no
+  transition ever re-enters `needs_clarification`) plus
+  `Intent.recordClarificationAnswer`'s own "already set" guard — a second
+  DB-level enforcement mechanism would be redundant, not defense-in-depth.
 
 ## Why there's no `pay-core` client at all
 
@@ -317,7 +378,8 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `AgentCoreClient` port + `durable-ledger` HTTP client
 - [x] `IntentRepository` port + Postgres/in-memory adapters
 - [x] `app/*`: `SubmitIntent`, `GetIntent`
-- [ ] `app/*`: `AnswerClarification`, `ApproveIntent`, `RejectIntent`
+- [x] `app/*`: `AnswerClarification`
+- [ ] `app/*`: `ApproveIntent`, `RejectIntent`
 - [ ] `AnthropicLlmClient` (live)
 - [ ] Hono HTTP layer + composition root + config + `main.ts`
 - [ ] End-to-end demo scenario

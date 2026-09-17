@@ -42,6 +42,7 @@ function baseRow(overrides: Partial<IntentRow> = {}): IntentRow {
     proposal: null,
     policyVerdict: null,
     durableLedgerEventId: null,
+    clarificationAnswer: null,
     version: 1,
     createdAt: now,
     updatedAt: now,
@@ -87,6 +88,26 @@ describe("intentToRow / rowToIntent round-trip", () => {
     const row = baseRow();
     const intent = rowToIntent(row);
     expect(intent.policyVerdict).toBeNull();
+  });
+
+  it("round-trips a non-null clarificationAnswer", () => {
+    const row = baseRow({
+      status: "needs_clarification",
+      proposal: clarifyProp,
+      clarificationAnswer: "Invoice #123, $50.00",
+    });
+    const intent = rowToIntent(row);
+    expect(intent.clarificationAnswer).toBe("Invoice #123, $50.00");
+    expect(intentToRow(intent, row.version).clarificationAnswer).toBe(
+      "Invoice #123, $50.00",
+    );
+  });
+
+  it("round-trips a null clarificationAnswer as null", () => {
+    const row = baseRow();
+    const intent = rowToIntent(row);
+    expect(intent.clarificationAnswer).toBeNull();
+    expect(intentToRow(intent, 1).clarificationAnswer).toBeNull();
   });
 
   it("round-trips id/customerId/text/status/durableLedgerEventId/timestamps and the version passed to intentToRow", () => {

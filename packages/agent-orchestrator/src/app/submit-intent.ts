@@ -6,12 +6,12 @@ import {
   Intent,
   MAX_INTENT_TEXT_LENGTH,
 } from "../domain/intent.js";
-import { evaluatePolicy } from "../policy/evaluate-policy.js";
 import type { PolicyConfig } from "../policy/rules.js";
 import { resolvePolicyConfig } from "../policy/rules.js";
 import type { PolicyVerdict } from "../policy/verdict.js";
 import type { LlmClient } from "../ports/llm-client.js";
 import type { IntentRepository } from "../ports/intent-repository.js";
+import { applyPolicy } from "./apply-policy.js";
 import { toIntentView, type IntentView } from "./intent-view.js";
 
 export const SubmitIntentCommand = z.object({
@@ -35,9 +35,6 @@ export interface SubmitIntentResult {
   readonly verdict: PolicyVerdict | null;
 }
 
-/** Trailing window `countCompletedSince` is queried over. Module-level, not an inline literal. */
-const DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
-
 /**
  * Submit a brand-new natural-language intent: create it, ask the `LlmClient`
  * to reason about it once, and — when the agent proposes a payment — run the
@@ -47,23 +44,19 @@ const DAILY_WINDOW_MS = 24 * 60 * 60 * 1000;
  *
  * Exactly four statuses are reachable through this use-case:
  * `needs_clarification` (agent asked a clarifying question), `proposed`
- * (agent proposed a payment and policy allowed it — see below on why an
- * `allow` verdict isn't persisted), `needs_approval` (policy gated the
- * proposal), and `rejected` (agent declined outright, or policy hard-rejected
- * it). `executing` is NOT reachable from this use-case: that requires an
- * `autoApprove`/`approve` call carrying a `durableLedgerEventId` minted by an
- * `AgentCoreClient` call, which is not wired into this slice.
+ * (agent proposed a payment and policy allowed it — see `apply-policy.ts`'s
+ * header for why an `allow` verdict isn't persisted), `needs_approval`
+ * (policy gated the proposal), and `rejected` (agent declined outright, or
+ * policy hard-rejected it). `executing` is NOT reachable from this use-case:
+ * that requires an `autoApprove`/`approve` call carrying a
+ * `durableLedgerEventId` minted by an `AgentCoreClient` call, which is not
+ * wired into this slice.
  *
- * ## Why an `allow` verdict is not persisted
- *
- * The daily rate limit (`policy/rules.ts`'s `dailyRateLimit` rule) is
- * time-dependent: a stored `allow` verdict from this moment would be stale by
- * the time a future claim/execute use-case actually moves money, since more
- * of the customer's intents may have completed in between. Policy must be
- * re-evaluated at claim/execute time regardless, in a future slice — so
- * persisting today's `allow` here would create a verdict that looks
- * authoritative but isn't. The intent instead stays `proposed`, with
- * `policyVerdict` still `null`, exactly as if policy had not run yet.
+ * The actual policy wiring (querying `countCompletedSince`, building
+ * `PolicyContext`, applying the verdict to the intent) lives in
+ * `apply-policy.ts`'s `applyPolicy`, shared with `AnswerClarification` — see
+ * that file's header for the full rationale, including why an `allow`
+ * verdict is never persisted.
  *
  * ## Exactly one repository write
  *
@@ -124,23 +117,12 @@ export class SubmitIntent {
         break;
       case "propose_payment": {
         intent.propose(proposal, now);
-        const completedIntentsLast24h = await this.repo.countCompletedSince(
-          intent.customerId,
-          new Date(now.getTime() - DAILY_WINDOW_MS),
+        verdict = await applyPolicy(
+          intent,
+          proposal,
+          { repo: this.repo, config: this.policyConfig },
+          now,
         );
-        verdict = evaluatePolicy(proposal, {
-          intentText: intent.text,
-          clarificationAnswer: null,
-          completedIntentsLast24h,
-          config: this.policyConfig,
-        });
-        if (verdict.decision === "needs_approval") {
-          intent.requireApproval(verdict, now);
-        } else if (verdict.decision === "reject") {
-          intent.rejectByPolicy(verdict, now);
-        }
-        // "allow": intent stays "proposed" — the verdict is deliberately NOT
-        // persisted onto the intent. See class header.
         break;
       }
       default: {

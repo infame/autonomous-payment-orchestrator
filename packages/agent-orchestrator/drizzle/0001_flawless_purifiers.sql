@@ -1,0 +1,3 @@
+ALTER TABLE "agent"."intents" ADD COLUMN "clarification_answer" text;--> statement-breakpoint
+ALTER TABLE "agent"."intents" ADD CONSTRAINT "intents_clarification_answer_bounded" CHECK (length(btrim("agent"."intents"."clarification_answer")) BETWEEN 1 AND 2000);--> statement-breakpoint
+ALTER TABLE "agent"."intents" ADD CONSTRAINT "intents_clarification_answer_requires_resolution" CHECK ("agent"."intents"."clarification_answer" IS NULL OR "agent"."intents"."status" NOT IN ('received','needs_clarification'));

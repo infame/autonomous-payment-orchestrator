@@ -63,6 +63,7 @@ export const intents = agentSchema.table(
     proposal: jsonb("proposal").$type<AgentProposal>(),
     policyVerdict: jsonb("policy_verdict").$type<PolicyVerdict>(),
     durableLedgerEventId: text("durable_ledger_event_id"),
+    clarificationAnswer: text("clarification_answer"),
     version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
@@ -91,6 +92,39 @@ export const intents = agentSchema.table(
       "intents_executing_requires_event_id",
       sql`${t.status} NOT IN ('executing','completed','failed','needs_review') OR ${t.durableLedgerEventId} IS NOT NULL`,
     ),
+    // (a) A SQL CHECK predicate that evaluates to NULL (as `btrim(NULL)`
+    // does) passes — Postgres only fails a row on FALSE, not NULL/UNKNOWN.
+    // So this check only ever fires when `clarification_answer` IS present:
+    // it enforces "non-blank when present", exactly mirroring
+    // `intents_text_bounded` above, but never rejects a NULL (unanswered)
+    // row. Same bound as `domain/intent.ts`'s `MAX_CLARIFICATION_ANSWER_LENGTH`
+    // (2,000).
+    check(
+      "intents_clarification_answer_bounded",
+      sql`length(btrim(${t.clarificationAnswer})) BETWEEN 1 AND 2000`,
+    ),
+    // (b) An answer can never be persisted while the row is still
+    // `received`/`needs_clarification` — this is the DB-side mirror of
+    // `AnswerClarification`'s single-write shape (record the answer on the
+    // in-memory aggregate, transition it, THEN write once; never a two-write
+    // "persist the answer, then later persist the transition" shape that
+    // could leave a row with an answer but no resolved status).
+    check(
+      "intents_clarification_answer_requires_resolution",
+      sql`${t.clarificationAnswer} IS NULL OR ${t.status} NOT IN ('received','needs_clarification')`,
+    ),
+    // (c) No set-once trigger on this column, unlike
+    // `durable_ledger_event_id`'s (see `drizzle/0000_*.sql`'s hand-written
+    // trigger): that trigger guards an exactly-once EXTERNAL side effect — a
+    // duplicate `durable-ledger` workflow run is real money moved twice.
+    // `clarification_answer` is an audit-fidelity concern, not an
+    // exactly-once external effect, and it's already fully prevented by two
+    // layers that exist regardless of this column: the status machine (no
+    // transition ever re-enters `needs_clarification`, so there is no path
+    // back to a state where a second answer could even be attempted) plus
+    // the domain's own "already set" guard in
+    // `Intent.recordClarificationAnswer`. A second DB-level enforcement
+    // mechanism would be redundant, not defense-in-depth.
     index("intents_customer_status_updated_at_idx").on(
       t.customerId,
       t.status,
