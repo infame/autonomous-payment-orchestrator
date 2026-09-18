@@ -30,3 +30,11 @@ use-cases"; a follow-up doc-only branch had to fix it.
   slice. `feat/agent-orchestrator-reject-intent` (2026-09-16) updated all four
   correctly — that is the bar.
 
+**Recurrence (2026-09-17, `feat/agent-orchestrator-http-layer`):** the same
+miss, now mid-step. Slice 1 of step 8 added `app/sync-intent-execution.ts`
+and updated `src/index.ts`'s header, but left the README saying "Steps 8-9
+don't exist yet", "All five exist" in the numbered list, "None of the five
+use-cases above scope by caller/customer", and a Roadmap with no line for the
+sixth use-case. On a multi-slice branch, ask for the minimal truthful edit in
+the slice that introduces the file (counts + Roadmap line + the "don't exist
+yet" sentence) rather than letting it ride to the last slice.

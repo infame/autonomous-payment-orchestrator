@@ -16,8 +16,8 @@ import {
  * package fakes the system that actually moves money — faking
  * `AgentCoreClient` outside a test would mean pretending to trigger a real
  * payment. This is an in-process `AgentCoreClient` double for `app/*`
- * use-case tests (currently just `ApproveIntent`), a genuinely different
- * thing from `adapters/http/fake-durable-ledger-server.ts`: that file is a
+ * use-case tests (`ApproveIntent` and `SyncIntentExecution`), a genuinely
+ * different thing from `adapters/http/fake-durable-ledger-server.ts`: that file is a
  * real `node:http` server used to test `HttpDurableLedgerClient` itself
  * (the HTTP adapter's request/response/error-classification wiring); this
  * file has no HTTP in it at all, and exists so a use-case test can assert
@@ -68,6 +68,16 @@ export class FakeAgentCoreClient implements AgentCoreClient {
    * clearing on a later retry.
    */
   startError: AgentCoreClientError | undefined;
+
+  /**
+   * When set, every `getRunStatus` call throws this instead of returning a
+   * snapshot — used by `SyncIntentExecution`'s tests to simulate every
+   * `AgentCoreClientError` subclass this port can throw, not only
+   * `AgentCoreRunNotFoundError` (the only one this fake produces on its
+   * own, for an eventId it has never registered). Cleared by the test
+   * itself to simulate the failure clearing on a later call.
+   */
+  getRunStatusError: AgentCoreClientError | undefined;
 
   private eventIdSeq = 0;
   /** idempotencyKey -> the eventId of the one REAL run created for that key. */
@@ -122,6 +132,9 @@ export class FakeAgentCoreClient implements AgentCoreClient {
     eventId: string,
     _opts?: RequestOptions,
   ): Promise<WorkflowRunSnapshot> {
+    if (this.getRunStatusError !== undefined) {
+      throw this.getRunStatusError;
+    }
     const snapshot = this.runsByEventId.get(eventId);
     if (snapshot === undefined) {
       throw new AgentCoreRunNotFoundError(
@@ -144,6 +157,38 @@ export class FakeAgentCoreClient implements AgentCoreClient {
   /** The eventId of the one REAL run registered for `idempotencyKey`, or `undefined` if that key has never been seen. Lets a test assert what got PERSISTED is explicitly NOT this value — i.e. a dud, not the real run's handle. */
   realRunEventIdFor(idempotencyKey: string): string | undefined {
     return this.realRunEventIdByKey.get(idempotencyKey);
+  }
+
+  /**
+   * Test hook: overwrites the snapshot registered for `eventId` (returned
+   * by future `getRunStatus` calls) by merging `patch` onto its current
+   * snapshot. Used to simulate durable-ledger/Inngest progressing a run
+   * past its initial `queued` snapshot — this fake has no scheduler of its
+   * own to do that on its own. Throws if `eventId` was never registered
+   * (i.e. `getRunStatus` would otherwise throw `AgentCoreRunNotFoundError`
+   * for it), since "settling" a run that never existed doesn't correspond
+   * to anything durable-ledger could really do. `patch` is deliberately
+   * narrower than `Partial<WorkflowRunSnapshot>` — it excludes `eventId`
+   * and `runId`, which are identity/handle fields a "settle" (progressing
+   * the SAME run to a later state) must never be able to smuggle in an
+   * inconsistent value for.
+   */
+  settleRun(
+    eventId: string,
+    patch: Partial<
+      Pick<
+        WorkflowRunSnapshot,
+        "status" | "needsReview" | "startedAt" | "endedAt" | "failureMessage"
+      >
+    >,
+  ): void {
+    const current = this.runsByEventId.get(eventId);
+    if (current === undefined) {
+      throw new Error(
+        `FakeAgentCoreClient.settleRun: no run registered for eventId "${eventId}"`,
+      );
+    }
+    this.runsByEventId.set(eventId, { ...current, ...patch });
   }
 
   private mintEventId(): string {

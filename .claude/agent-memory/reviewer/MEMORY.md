@@ -6,3 +6,4 @@
 - [README Status/order/Roadmap trio](package-readme-status-trio.md) — the three README sections restate JSDoc contracts and must all move each slice.
 - [Reviewing vendor-SDK adapters](vendor-sdk-adapter-review.md) — verify SDK claims in node_modules + a throwaway probe; walk the `cause` chain, not just the message.
 - [Prove a regression test against the pre-fix commit](verify-regression-test-against-pre-fix.md) — run the new test in a detached worktree at the old sha; vacuous tests are common.
+- [Mirrored durable-ledger types lose invariants](mirrored-type-invariants.md) — check snapshot-field reasoning against the producer's code, not agent-orchestrator's hand-written mirror.

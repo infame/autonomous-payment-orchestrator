@@ -18,7 +18,7 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-7 of 9 complete
+## Status: steps 1-7 of 9 complete, plus the first slice of step 8
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
@@ -27,7 +27,8 @@ policy layer, the `LlmClient` port with its mock adapter, the
 1-5 of the spec's own implementation order (§14) — plus all five of step
 6's `app/*` use-cases: `SubmitIntent`, `GetIntent`, `AnswerClarification`,
 `RejectIntent`, and `ApproveIntent` — plus step 7, `AnthropicLlmClient`,
-the live `LlmClient` adapter:
+the live `LlmClient` adapter — plus a sixth `app/*` use-case,
+`SyncIntentExecution`, which is the first slice of step 8 (see below):
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -49,17 +50,23 @@ the live `LlmClient` adapter:
    `AnswerClarification`, `RejectIntent`, and `ApproveIntent`** — see below.
 7. **`adapters/llm/anthropic-llm-client.ts` — the real, live LLM adapter.**
    Done: see "`LlmClient`, `MockLlmClient`, and `AnthropicLlmClient`" below.
-8. A thin Hono HTTP layer + composition root + config + `main.ts`.
+8. A thin Hono HTTP layer + composition root + config + `main.ts`, plus the
+   `app/*` use-cases the HTTP layer needs that don't fit under step 6's
+   original five — so far just `SyncIntentExecution` (below), the
+   `executing → terminal` reconciliation use-case a future
+   `GET /intents/:id` route will call.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-Steps 8-9 don't exist yet — no HTTP layer of this package's own, no
-composition root, no `main.ts`. `AgentCoreClient` IS now wired into a
-use-case (`ApproveIntent`, below) — what's still missing is wiring
-`ApproveIntent` itself up behind a real HTTP route, which is step 8's job.
+Step 8's first slice — `SyncIntentExecution` — exists; the rest of it does
+not: no Hono HTTP layer of this package's own, no composition root, no
+`main.ts`. `AgentCoreClient` is wired into two use-cases now
+(`ApproveIntent` and `SyncIntentExecution`, both below) — what's still
+missing is wiring either of them up behind a real HTTP route, which is the
+remainder of step 8's job.
 **`AnthropicLlmClient` exists as a standalone adapter (step 7) but is NOT
 wired to anything yet.** There is no `LLM_MODE` switch, no composition root
-reading it, and no way to reach `live` mode end-to-end until step 8 lands —
-today it is exercised only by its own unit tests against a fake
+reading it, and no way to reach `live` mode end-to-end until step 8 fully
+lands — today it is exercised only by its own unit tests against a fake
 `AnthropicMessagesApi` (see below).
 
 ### `SubmitIntent` and `GetIntent` (step 6, first slice)
@@ -210,16 +217,43 @@ someone else's intent. This is not a hypothetical gap; it is the single
 most important thing to close, at the future HTTP/auth layer (step 8),
 before this use-case is ever wired up as `POST /intents/:id/approve`.
 
-**None of the five use-cases above scope by caller/customer yet** — each
+### `SyncIntentExecution` (step 8, first slice)
+
+`SyncIntentExecution` (`src/app/sync-intent-execution.ts`) reconciles an
+`executing` intent against durable-ledger's actual workflow status via
+`AgentCoreClient.getRunStatus` — closing the gap left after `ApproveIntent`
+where `Intent.complete`/`Intent.fail`/`Intent.flagForReview` and
+`getRunStatus` otherwise had no caller at all, so an intent that reached
+`executing` would stay there forever. It is a separate use-case from
+`GetIntent` rather than an optional dependency on it — an optional
+`agentCore` constructor argument would let a caller silently turn a pure
+query into a mutating call. On an `executing` intent it performs at most
+one repository write, only on an actual transition
+(`completed`/`failed`/`needs_review`); a non-`executing` intent, a
+non-terminal (`queued`/`running`) snapshot, or an `AgentCoreClientError`
+from `getRunStatus` all return the stored view unchanged with no write.
+Unlike `ApproveIntent`, an `AgentCoreClientError` here is swallowed rather
+than propagated: this is the *read* path a polling client will hammer
+repeatedly, and a stale `executing` is a strictly better answer than a 503
+on every poll — the opposite tradeoff from `ApproveIntent`, where the
+failing call was the one that was supposed to move money. It is the
+use-case a future `GET /intents/:id` route will call.
+
+**None of the six use-cases above scope by caller/customer yet** — each
 takes a bare `intentId` (or, for `SubmitIntent`, a caller-supplied
 `customerId` that nothing cross-checks against an authenticated identity).
-For `GetIntent` that's a read-only gap; for `AnswerClarification`,
-`RejectIntent`, and — most importantly — `ApproveIntent`, it means anyone
-holding an intent id can steer, terminate, or trigger real money movement
-on someone else's pending payment. This is deliberately deferred to the
-future HTTP/auth layer (step 8), same stage `durable-ledger` was at before
-its own HTTP layer landed — but it must be closed there before any of
-these use-cases are reachable over the network.
+For `GetIntent` and `SyncIntentExecution` that's a read-only gap; for
+`AnswerClarification`, `RejectIntent`, and — most importantly —
+`ApproveIntent`, it means anyone holding an intent id can steer, terminate,
+or trigger real money movement on someone else's pending payment. This is
+deliberately deferred to the future HTTP/auth layer (step 8), same stage
+`durable-ledger` was at before its own HTTP layer landed — but it must be
+closed there before any of these use-cases are reachable over the network.
+Unlike the others' vaguer "deferred to the future HTTP/auth layer" wording,
+`SyncIntentExecution`'s own header names the actual mechanism already
+decided for that later slice of step 8: comparing a customer-identity
+header against `Intent.customerId` at the HTTP boundary, before
+`GET /intents/:id` is reachable at all.
 
 ## `AgentCoreClient` and `HttpDurableLedgerClient`
 
@@ -277,9 +311,10 @@ Four things worth knowing about the shape of this port:
   base-URL misconfiguration as a domain outcome.
 
 `src/adapters/memory/fake-agent-core-client.ts` — built once `ApproveIntent`
-(below) actually needed an `AgentCoreClient` double to test against — is an
-in-process port double, distinct from the HTTP fake server above: that fake
-exercises `HttpDurableLedgerClient`'s own request/response/error-classification
+actually needed an `AgentCoreClient` double to test against, and since
+extended for `SyncIntentExecution`'s tests (above) — is an in-process port
+double, distinct from the HTTP fake server above: that fake exercises
+`HttpDurableLedgerClient`'s own request/response/error-classification
 wiring over a real socket, while this one lets an `app/*` use-case test
 assert on calls directly with no HTTP involved at all. It is deliberately
 NOT a trivial stub: it mints a fresh `eventId` on every `startPaymentWorkflow`
@@ -287,8 +322,12 @@ call, but only creates a genuine new run the first time a given
 `idempotencyKey` is seen — modeling ADR-0013's empirically-verified Inngest
 dedup behavior, including the "dud handle" case (a later call with an
 already-seen key gets back a real-looking but permanently un-runnable
-`eventId`). Test support only, not exported — same reasoning as the HTTP
-fake server above.
+`eventId`). `settleRun`/`getRunStatusError` let a test progress a
+registered run past its initial `queued` snapshot, or force a specific
+`AgentCoreClientError` out of `getRunStatus` — needed once
+`SyncIntentExecution` gave this fake its first caller of `getRunStatus`
+that cares about anything beyond "not found". Test support only, not
+exported — same reasoning as the HTTP fake server above.
 
 ## The domain model
 
@@ -615,5 +654,6 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `app/*`: `RejectIntent`
 - [x] `app/*`: `ApproveIntent`
 - [x] `AnthropicLlmClient` (live)
+- [x] `app/*`: `SyncIntentExecution` (step 8, first slice)
 - [ ] Hono HTTP layer + composition root + config + `main.ts`
 - [ ] End-to-end demo scenario

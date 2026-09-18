@@ -124,6 +124,21 @@ export interface WorkflowRunSnapshot {
   readonly status: WorkflowRunStatus;
   readonly startedAt: string | null;
   readonly endedAt: string | null;
+  /**
+   * `true` iff `status === "failed"` AND the run's output contains
+   * durable-ledger's `NEEDS_REVIEW_MARKER` — mirrored verbatim from that
+   * side's own doc comment (`WorkflowRunSnapshot.needsReview`,
+   * `src/ports/workflow-runs.ts`). NOT an independent flag that can appear
+   * alongside any `status`: durable-ledger's own producer
+   * (`adapters/inngest/inngest-workflow-runs.ts`) computes it as
+   * `failed && outputAsString(detail.output).includes(NEEDS_REVIEW_MARKER)`,
+   * so `needsReview: true` together with `status !== "failed"` is not a
+   * shape this port's only real implementation can ever emit. A consumer
+   * (see `app/sync-intent-execution.ts`) may still choose to check this
+   * field ahead of `status` as defense-in-depth against a hypothetical
+   * future implementation that violates the invariant — but must not
+   * describe that invariant as real orthogonality when documenting why.
+   */
   readonly needsReview: boolean;
   readonly failureMessage: string | null;
 }

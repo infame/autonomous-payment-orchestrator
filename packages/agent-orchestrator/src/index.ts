@@ -7,7 +7,14 @@
  * `AgentCoreClient` port, and the `IntentRepository` port with its Postgres
  * and in-memory adapters — plus step 6 in full: all five `app/*` use-cases,
  * `SubmitIntent`, `GetIntent`, `AnswerClarification`, `RejectIntent`, and
- * `ApproveIntent`.
+ * `ApproveIntent` — plus the first slice of step 8, a sixth use-case,
+ * `SyncIntentExecution`: it reconciles an `executing` intent against
+ * durable-ledger's actual workflow status, closing the gap left after
+ * `ApproveIntent` where `Intent.complete`/`Intent.fail`/
+ * `Intent.flagForReview` and `AgentCoreClient.getRunStatus` had no caller at
+ * all, so an intent that reached `executing` would stay there forever. The
+ * Hono HTTP layer, config, composition root, and `main.ts` that will call it
+ * are still later slices of the same step (see below).
  *
  * `MockLlmClient` and its directive grammar ARE exported (unlike
  * `durable-ledger`'s test-only fakes) — `mock` is a real runtime mode for
@@ -61,6 +68,7 @@ export * from "./app/get-intent.js";
 export * from "./app/answer-clarification.js";
 export * from "./app/reject-intent.js";
 export * from "./app/approve-intent.js";
+export * from "./app/sync-intent-execution.js";
 
 // Adapters
 export * from "./adapters/llm/directives.js";
