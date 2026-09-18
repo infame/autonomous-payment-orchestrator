@@ -38,3 +38,21 @@ use-cases above scope by caller/customer", and a Roadmap with no line for the
 sixth use-case. On a multi-slice branch, ask for the minimal truthful edit in
 the slice that introduces the file (counts + Roadmap line + the "don't exist
 yet" sentence) rather than letting it ride to the last slice.
+
+**Doc-only "known limitation" notes (2026-09-18,
+`chore/agent-orchestrator-document-auto-approve-gap`):** the package has no
+"Known limitations" section — such notes get inlined as a bold paragraph at
+the end of the topically-nearest section (here, `## The domain model`). Two
+checks that apply to that shape:
+- If the note ends with "revisit it as its own slice", the `Roadmap`
+  checklist at the bottom is the README's index of deferred work and should
+  gain an unchecked line. A deferral documented only in prose 300 lines above
+  the Roadmap is invisible to whoever plans the next slice.
+- A note that asserts something is now *reachable* ("only `needs_approval →
+  executing` via `ApproveIntent` is reachable") contradicts older prose that
+  still calls the same thing future ("which only a future `ApproveIntent` ...
+  can produce", README ~line 82). Grep the README for "a future <Name>" /
+  "once ... exists" naming anything the new paragraph treats as existing.
+- "`X` has no caller anywhere in this package" is normally false as written:
+  tests call it. The accurate claim is "no production caller — only tests
+  construct it". Verify with `grep -rn X src | grep -v test`.

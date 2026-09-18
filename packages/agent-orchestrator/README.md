@@ -78,7 +78,7 @@ performs exactly one repository write (`IntentRepository.create`) and can
 leave the persisted `Intent` in exactly four statuses:
 `needs_clarification`, `proposed`, `needs_approval`, or `rejected`.
 `executing` is **not** reachable from this use-case — that requires a
-`durableLedgerEventId`, which only a future `ApproveIntent` (calling
+`durableLedgerEventId`, which only `ApproveIntent` (calling
 `AgentCoreClient`) can produce. A policy "allow" decision is surfaced to
 the immediate caller (`SubmitIntentResult.verdict`) but deliberately **not**
 persisted onto the intent: the daily-rate-limit rule is time-dependent, so
@@ -358,6 +358,24 @@ into `evaluatePolicy`'s `PolicyContext` and then forgotten.
 separately, once `AnswerClarification` has re-asked the `LlmClient`. See
 the method's own doc comment in `src/domain/intent.ts` for the full set-once
 reasoning.
+
+**Known limitation: a policy `allow` verdict currently has no route out of
+`proposed`.** `Intent.autoApprove` (the domain's own `proposed → executing`
+transition, for exactly this case) has no *production* caller — only
+tests construct it directly as a seeding/transition helper — `SubmitIntent`/`AnswerClarification` deliberately don't persist
+an `allow` verdict (see `apply-policy.ts`'s header: it would be stale by
+claim/execute time regardless), and nothing else ever re-evaluates policy
+on a `proposed` intent to *act* on a fresh `allow`. So an intent whose
+first policy pass was `allow` sits at `proposed` forever today; only
+`needs_approval → executing` (via `ApproveIntent`) is reachable. This is
+deliberately NOT being fixed as part of step 8: closing it properly means
+giving `POST /intents` a client-supplied `Idempotency-Key` first — the
+key `ApproveIntent` uses (`Intent.id`) is minted *inside* `SubmitIntent`,
+so ADR-0013's dedup gives zero protection against a retried `POST /intents`
+turning into a second real payment once auto-approve can trigger one on
+the very first call. That's a schema-touching design conversation (a
+uniqueness constraint on the intent row, most likely), not step-8
+plumbing — revisit it as its own slice once step 8 ships.
 
 ## Why the policy layer is separate — from both the LLM and the use-cases
 
@@ -656,4 +674,5 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `AnthropicLlmClient` (live)
 - [x] `app/*`: `SyncIntentExecution` (step 8, first slice)
 - [ ] Hono HTTP layer + composition root + config + `main.ts`
+- [ ] Auto-approve path: client-supplied `Idempotency-Key` on `POST /intents` + an `Intent.autoApprove` caller (deferred past step 8, see "Known limitation" above)
 - [ ] End-to-end demo scenario
