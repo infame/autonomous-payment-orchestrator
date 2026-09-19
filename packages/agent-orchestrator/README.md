@@ -18,7 +18,7 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-7 of 9 complete, plus the first slice of step 8
+## Status: steps 1-7 of 9 complete, plus the first two slices of step 8
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
@@ -28,7 +28,8 @@ policy layer, the `LlmClient` port with its mock adapter, the
 6's `app/*` use-cases: `SubmitIntent`, `GetIntent`, `AnswerClarification`,
 `RejectIntent`, and `ApproveIntent` — plus step 7, `AnthropicLlmClient`,
 the live `LlmClient` adapter — plus a sixth `app/*` use-case,
-`SyncIntentExecution`, which is the first slice of step 8 (see below):
+`SyncIntentExecution` (step 8's first slice), plus `config.ts` (step 8's
+second slice, see below):
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -54,20 +55,23 @@ the live `LlmClient` adapter — plus a sixth `app/*` use-case,
    `app/*` use-cases the HTTP layer needs that don't fit under step 6's
    original five — so far just `SyncIntentExecution` (below), the
    `executing → terminal` reconciliation use-case a future
-   `GET /intents/:id` route will call.
+   `GET /intents/:id` route will call. `config.ts` (env-var parsing) is
+   also done; the Hono layer, composition root, and `main.ts` remain.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-Step 8's first slice — `SyncIntentExecution` — exists; the rest of it does
-not: no Hono HTTP layer of this package's own, no composition root, no
-`main.ts`. `AgentCoreClient` is wired into two use-cases now
-(`ApproveIntent` and `SyncIntentExecution`, both below) — what's still
-missing is wiring either of them up behind a real HTTP route, which is the
-remainder of step 8's job.
+Step 8's first two slices — `SyncIntentExecution` and `config.ts` — exist;
+the rest of it does not: no Hono HTTP layer of this package's own, no
+composition root, no `main.ts`. `AgentCoreClient` is wired into two
+use-cases now (`ApproveIntent` and `SyncIntentExecution`, both below) —
+what's still missing is wiring either of them up behind a real HTTP route,
+which is the remainder of step 8's job.
 **`AnthropicLlmClient` exists as a standalone adapter (step 7) but is NOT
-wired to anything yet.** There is no `LLM_MODE` switch, no composition root
-reading it, and no way to reach `live` mode end-to-end until step 8 fully
-lands — today it is exercised only by its own unit tests against a fake
-`AnthropicMessagesApi` (see below).
+wired to anything yet.** `config.ts` (`src/config.ts`) now has an
+`LLM_MODE` switch (`mock` | `live`) and validates that `live` mode carries
+an `ANTHROPIC_API_KEY`, but nothing reads that config yet — there is still
+no composition root, and no way to reach `live` mode end-to-end until step
+8 fully lands. Today `AnthropicLlmClient` is exercised only by its own unit
+tests against a fake `AnthropicMessagesApi` (see below).
 
 ### `SubmitIntent` and `GetIntent` (step 6, first slice)
 
@@ -673,6 +677,7 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `app/*`: `ApproveIntent`
 - [x] `AnthropicLlmClient` (live)
 - [x] `app/*`: `SyncIntentExecution` (step 8, first slice)
-- [ ] Hono HTTP layer + composition root + config + `main.ts`
+- [x] `config.ts` (step 8, second slice)
+- [ ] Hono HTTP layer + composition root + `main.ts`
 - [ ] Auto-approve path: client-supplied `Idempotency-Key` on `POST /intents` + an `Intent.autoApprove` caller (deferred past step 8, see "Known limitation" above)
 - [ ] End-to-end demo scenario

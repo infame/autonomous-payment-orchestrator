@@ -20,9 +20,10 @@ import { mergeDirectives, parseDirectives } from "./directives.js";
  * (`adapters/llm/anthropic-llm-client.ts`, step 7) everywhere a real model
  * call would otherwise be needed: local development, tests, and the public
  * demo's `mock` mode (spec §5). `AnthropicLlmClient` exists as a standalone
- * adapter as of step 7, but nothing wires it up yet — no composition root,
- * no `LLM_MODE` switch (step 8) — so this class remains the only `LlmClient`
- * actually reachable anywhere in this codebase today.
+ * adapter as of step 7, and `config.ts`'s `LLM_MODE` switch (step 8) now
+ * exists too, but nothing wires it up yet — no composition root reads it —
+ * so this class remains the only `LlmClient` actually reachable anywhere in
+ * this codebase today.
  *
  * ## Why the directive grammar is digit-free
  *

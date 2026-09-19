@@ -56,3 +56,17 @@ checks that apply to that shape:
 - "`X` has no caller anywhere in this package" is normally false as written:
   tests call it. The accurate claim is "no production caller — only tests
   construct it". Verify with `grep -rn X src | grep -v test`.
+
+**Recurrence, inverted (2026-09-18, `feat/agent-orchestrator-config`, step 8
+slice 2):** the README quartet was updated correctly and precisely this time
+("`config.ts` now has an `LLM_MODE` switch ... but nothing reads that config
+yet"), while the *source headers* that assert the same file's absence were
+left behind: `src/index.ts` still said "Not exported because they don't exist
+yet: the HTTP/Hono layer, composition root, config, and `main.ts`" and
+`adapters/llm/anthropic-llm-client.ts` still said "no composition root, no
+config, no `LLM_MODE` switch exist yet". So the check runs both ways: when a
+slice adds a file, grep the package's sources for prose asserting that file's
+non-existence, not just the README. Cheap recipe:
+`grep -rn "don't exist yet\|no config\|not built yet\|LLM_MODE" packages/<pkg>/src --exclude="*.test.ts"`.
+The in-repo fix phrasing to copy is `durable-ledger/src/index.ts`'s
+"Not exported: `config.ts`/`main.ts` are bootstrap-only".

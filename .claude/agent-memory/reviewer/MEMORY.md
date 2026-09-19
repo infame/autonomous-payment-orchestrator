@@ -7,3 +7,4 @@
 - [Reviewing vendor-SDK adapters](vendor-sdk-adapter-review.md) — verify SDK claims in node_modules + a throwaway probe; walk the `cause` chain, not just the message.
 - [Prove a regression test against the pre-fix commit](verify-regression-test-against-pre-fix.md) — run the new test in a detached worktree at the old sha; vacuous tests are common.
 - [Mirrored durable-ledger types lose invariants](mirrored-type-invariants.md) — check snapshot-field reasoning against the producer's code, not agent-orchestrator's hand-written mirror.
+- [config.ts env `FOO=` trap](config-env-empty-string-trap.md) — blank env lines coerce to 0; the two accepted fixes (.positive() vs z.preprocess) and the whitespace-only residual.

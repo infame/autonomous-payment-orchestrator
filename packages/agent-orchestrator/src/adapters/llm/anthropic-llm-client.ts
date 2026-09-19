@@ -50,8 +50,9 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  * The real, live `LlmClient` (spec step 7) — everywhere `MockLlmClient`
  * stands in during development, tests, and the demo's `mock` mode, this is
  * what a `live` mode would use instead. Not wired into anything by this step
- * (see `src/index.ts`'s header) — no composition root, no config, no
- * `LLM_MODE` switch exist yet.
+ * (see `src/index.ts`'s header): `config.ts`'s `LLM_MODE` switch exists and
+ * gates `ANTHROPIC_API_KEY`, but no composition root reads it yet, so this
+ * adapter stays unreachable end-to-end regardless.
  *
  * ## Three tools are response CHANNELS, not new capabilities
  *

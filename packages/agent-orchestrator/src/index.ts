@@ -13,8 +13,8 @@
  * `ApproveIntent` where `Intent.complete`/`Intent.fail`/
  * `Intent.flagForReview` and `AgentCoreClient.getRunStatus` had no caller at
  * all, so an intent that reached `executing` would stay there forever. The
- * Hono HTTP layer, config, composition root, and `main.ts` that will call it
- * are still later slices of the same step (see below).
+ * Hono HTTP layer, composition root, and `main.ts` that will call it are
+ * still later slices of the same step (see below).
  *
  * `MockLlmClient` and its directive grammar ARE exported (unlike
  * `durable-ledger`'s test-only fakes) — `mock` is a real runtime mode for
@@ -37,11 +37,14 @@
  * (test support only — there is no legitimate runtime mode where this
  * package fakes the system that actually moves money or fakes the vendor
  * LLM's own SDK surface, unlike `InMemoryIntentRepository`/`MockLlmClient`
- * above). Not exported because they don't exist yet: the HTTP/Hono layer,
- * composition root, config, and `main.ts` (step 8) — which is also where
- * `AgentCoreClient` gets wired into `ApproveIntent` behind a real route, and
- * where `AnthropicLlmClient` would first become reachable end-to-end via an
- * `LLM_MODE` switch.
+ * above). Not exported: `config.ts` is bootstrap-only, matching
+ * `durable-ledger`'s own precedent (`packages/durable-ledger/src/index.ts`
+ * doesn't export it either). Not exported because they don't exist yet: the
+ * HTTP/Hono layer, composition root, and `main.ts` (step 8) — which is also
+ * where `AgentCoreClient` gets wired into `ApproveIntent` behind a real
+ * route, and where `AnthropicLlmClient` would first become reachable
+ * end-to-end via `config.ts`'s `LLM_MODE` switch, once a composition root
+ * actually reads it.
  */
 
 // Domain
