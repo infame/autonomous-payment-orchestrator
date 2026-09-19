@@ -18,7 +18,7 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-7 of 9 complete, plus the first two slices of step 8
+## Status: steps 1-7 of 9 complete, plus the first three slices of step 8
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
@@ -28,8 +28,9 @@ policy layer, the `LlmClient` port with its mock adapter, the
 6's `app/*` use-cases: `SubmitIntent`, `GetIntent`, `AnswerClarification`,
 `RejectIntent`, and `ApproveIntent` — plus step 7, `AnthropicLlmClient`,
 the live `LlmClient` adapter — plus a sixth `app/*` use-case,
-`SyncIntentExecution` (step 8's first slice), plus `config.ts` (step 8's
-second slice, see below):
+`SyncIntentExecution` (step 8's first slice), `config.ts` (step 8's second
+slice), and now the Hono HTTP layer (step 8's third slice — see "HTTP
+interface" below):
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -54,17 +55,22 @@ second slice, see below):
 8. A thin Hono HTTP layer + composition root + config + `main.ts`, plus the
    `app/*` use-cases the HTTP layer needs that don't fit under step 6's
    original five — so far just `SyncIntentExecution` (below), the
-   `executing → terminal` reconciliation use-case a future
-   `GET /intents/:id` route will call. `config.ts` (env-var parsing) is
-   also done; the Hono layer, composition root, and `main.ts` remain.
+   `executing → terminal` reconciliation use-case `GET /intents/:id` now
+   calls. `config.ts` (env-var parsing) is done, and the Hono HTTP layer
+   (`adapters/http/`, see "HTTP interface" below) now exists and wires all
+   six use-cases behind real routes; the composition root and `main.ts`
+   that will construct real adapters and call it remain.
 9. Tests land alongside each step above; an end-to-end demo scenario last.
 
-Step 8's first two slices — `SyncIntentExecution` and `config.ts` — exist;
-the rest of it does not: no Hono HTTP layer of this package's own, no
-composition root, no `main.ts`. `AgentCoreClient` is wired into two
-use-cases now (`ApproveIntent` and `SyncIntentExecution`, both below) —
-what's still missing is wiring either of them up behind a real HTTP route,
-which is the remainder of step 8's job.
+Step 8's first three slices — `SyncIntentExecution`, `config.ts`, and the
+Hono HTTP layer — exist; what remains is the composition root and
+`main.ts` that will actually construct a real `IntentRepository`/`LlmClient`/
+`AgentCoreClient` and call `createAgentOrchestratorApp` with them.
+`AgentCoreClient` is wired into two use-cases now (`ApproveIntent` and
+`SyncIntentExecution`, both below), and both are now reachable over HTTP
+(`POST /intents/:id/approve`, `GET /intents/:id`) — but only against
+whatever adapters a caller of `createAgentOrchestratorApp` constructs by
+hand, since nothing yet builds and boots those adapters itself.
 **`AnthropicLlmClient` exists as a standalone adapter (step 7) but is NOT
 wired to anything yet.** `config.ts` (`src/config.ts`) now has an
 `LLM_MODE` switch (`mock` | `live`) and validates that `live` mode carries
@@ -241,23 +247,143 @@ than propagated: this is the *read* path a polling client will hammer
 repeatedly, and a stale `executing` is a strictly better answer than a 503
 on every poll — the opposite tradeoff from `ApproveIntent`, where the
 failing call was the one that was supposed to move money. It is the
-use-case a future `GET /intents/:id` route will call.
+use-case `GET /intents/:id` calls (see "HTTP interface" below).
 
-**None of the six use-cases above scope by caller/customer yet** — each
-takes a bare `intentId` (or, for `SubmitIntent`, a caller-supplied
-`customerId` that nothing cross-checks against an authenticated identity).
+**None of the six use-cases above scope by caller/customer THEMSELVES** —
+each still takes a bare `intentId` (or, for `SubmitIntent`, a caller-supplied
+`customerId` that nothing inside the use-case cross-checks against anything).
 For `GetIntent` and `SyncIntentExecution` that's a read-only gap; for
 `AnswerClarification`, `RejectIntent`, and — most importantly —
-`ApproveIntent`, it means anyone holding an intent id can steer, terminate,
-or trigger real money movement on someone else's pending payment. This is
-deliberately deferred to the future HTTP/auth layer (step 8), same stage
-`durable-ledger` was at before its own HTTP layer landed — but it must be
-closed there before any of these use-cases are reachable over the network.
-Unlike the others' vaguer "deferred to the future HTTP/auth layer" wording,
-`SyncIntentExecution`'s own header names the actual mechanism already
-decided for that later slice of step 8: comparing a customer-identity
-header against `Intent.customerId` at the HTTP boundary, before
-`GET /intents/:id` is reachable at all.
+`ApproveIntent`, it would mean anyone holding an intent id could steer,
+terminate, or trigger real money movement on someone else's pending payment
+— if these use-cases were ever called directly, bypassing the HTTP layer.
+That gap is now closed one level up, at the HTTP boundary: every
+id-addressed route in "HTTP interface" below compares `X-Customer-Id`
+against the stored `Intent.customerId` before calling any of these
+use-cases, per [ADR-0014](../../docs/adr/0014-customer-scoping-without-authentication.md).
+The use-cases themselves remain individually unsafe on their own — ADR-0014
+states this as a binding constraint on any FUTURE driving adapter for this
+package, not just a description of this one.
+
+## HTTP interface
+
+`adapters/http/app.ts`'s `createAgentOrchestratorApp(deps)` builds a Hono
+`app` wired against the six use-cases above. It takes its deps as a plain
+parameter object (`AgentOrchestratorAppDeps`, each use-case narrowed to
+`Pick<X, "execute">`) and constructs nothing itself — no real
+`IntentRepository`, `LlmClient`, or `AgentCoreClient` adapter is ever
+constructed inside `adapters/http/`. Building and injecting real adapters is
+the composition root's job, still step 8's one remaining slice (see
+"Status" above).
+
+| Route | Use-case | Success | Notes |
+| --- | --- | --- | --- |
+| `POST /intents` | `SubmitIntent` | `201 { intent, verdict }` | `customerId` comes from `X-Customer-Id`, never the body |
+| `POST /intents/:id/clarify` | `AnswerClarification` | `200 { intent, verdict }` | |
+| `POST /intents/:id/approve` | `ApproveIntent` | `200 { intent }` | no `verdict` key at all |
+| `POST /intents/:id/reject` | `RejectIntent` | `200 { intent }` | no `verdict` key at all |
+| `GET /intents/:id` | `SyncIntentExecution` (falls back to `GetIntent` on a version conflict) | `200 { intent }` | no `verdict` key at all |
+| `GET /healthz` | none | `200 { status: "ok" }` | liveness only, see below |
+
+The `{ intent, verdict }` vs. `intent.policyVerdict` distinction from
+`SubmitIntent`/`AnswerClarification`'s own headers carries through
+unchanged at the HTTP layer: `verdict` is the ephemeral, just-computed
+`PolicyVerdict` (including `allow`, which is never persisted), while
+`intent.policyVerdict` is whatever `needs_approval`/`reject` verdict is
+actually stored on the row (`null` on an `allow` or a `clarify`/`decline`
+outcome). `approve`/`reject`/`GET` never carry a `verdict` key at all —
+not `verdict: null` — because no policy evaluation happens on those routes;
+its absence is the signal.
+
+### Customer scoping
+
+`X-Customer-Id` is the sole caller-identity channel — see
+[ADR-0014](../../docs/adr/0014-customer-scoping-without-authentication.md)
+for the full argument. In short: it's a bare, unsigned, trivially-spoofable
+header, not real authentication (acceptable for this portfolio project's
+stated scope). Every id-addressed route reads it, reads `:id`, calls
+`GetIntent.execute(id)`, and — on a mismatch against the stored
+`Intent.customerId` — throws the exact same `IntentNotFoundError` a genuine
+miss would throw, BEFORE calling the route's real use-case. A mismatch is
+always `404`, never `403`: a `403` would be an existence oracle, and
+combined with `InvalidIntentStateError`'s status-bearing message, a state
+oracle too. This ownership check running strictly before the use-case call
+is the entire security property of this HTTP layer — see `app.ts`'s own
+header for why getting that ordering wrong is the single most dangerous
+possible change to that file.
+
+### Error mapping
+
+`adapters/http/server-error-mapper.ts`'s `mapError` is the single place
+every thrown error becomes a status + JSON envelope
+(`{ error: { code, message, details?, durableLedgerEventId? } }`):
+
+| Error | Status | Code |
+| --- | --- | --- |
+| `ZodError` | 400 | `validation_failed` |
+| `HttpError` (bad header/JSON, this file's own throws) | its own | its own |
+| `ExecutionRaceLostError` | 409 | `execution_race_lost` (+ `durableLedgerEventId`) |
+| `IntentNotFoundError` | 404 | `intent_not_found` |
+| `InvalidIntentStateError` | 422 | `invalid_intent_state` |
+| `InvalidIntentError` | 400 | `invalid_intent` |
+| `IntentVersionConflictError` | 409 | `intent_version_conflict` |
+| `InvalidProposalError`, `IntentAlreadyExistsError` | 500 | `internal_error` (server faults, never a caller-fixable 4xx) |
+| `LlmUnavailableError` | 503 | `llm_unavailable` |
+| `LlmConfigurationError` | 500 | `llm_configuration_error` |
+| `LlmProtocolError` | 502 | `llm_protocol_error` |
+| `AgentCoreUnavailableError` | 503 | `agent_core_unavailable` |
+| `AgentCoreNetworkError` | 503 | `agent_core_network_error` |
+| `AgentCoreTimeoutError` | 504 | `agent_core_timeout` |
+| `AgentCoreUnexpectedResponseError` | 503 if `.retryable`, else 502 | `agent_core_unexpected_response` |
+| `AgentCoreMalformedResponseError` | 502 | `agent_core_malformed_response` |
+| `AgentCoreBadRequestError`, `AgentCoreRunNotFoundError`, `AgentCoreRequestCanceledError` | 500 | `internal_error` (this client's own fault, never the caller's) |
+| anything else | 500 | `internal_error` |
+
+A policy `reject` is explicitly **not** an error — `POST /intents` on a
+hard-rejected proposal is a `201` with `intent.status === "rejected"`, not a
+4xx; see "HTTP interface" above. Every `LlmClientError`/`AgentCoreClientError`
+row uses a FIXED message, never `err.message`/`err.reason` — both ports'
+own headers already forbid building an error message from vendor/response
+detail, and this mapper is the last line of defense against that leaking
+onto the wire. `execution_race_lost` is the one deliberate exception to the
+shared `{code, message, details?}` envelope: it also carries
+`durableLedgerEventId`, the sole handle to an orphaned, money-moving
+durable-ledger run (no `workflow_runs` correlation table exists to
+re-derive it, per ADR-0010/0013). Several rows are currently unreachable in
+practice — `AgentCoreBadRequestError`/`AgentCoreRunNotFoundError`/
+`AgentCoreRequestCanceledError` can only originate from this client's own
+bug or an explicit caller cancellation, and `InvalidProposalError`/
+`IntentAlreadyExistsError` require `LlmClient`/`IntentRepository` to violate
+their own documented contracts — they're mapped anyway so the mapper fails
+closed rather than falling through to a misleading default.
+
+### Why `/healthz` is liveness-only
+
+Same rationale as both sibling packages: pinging the LLM or the database on
+every load-balancer probe interval would be wasteful at best (extra vendor
+calls/DB round-trips on a timer that has nothing to do with real traffic)
+and dangerous at worst (a probe interval tighter than a real outage's
+recovery time could flap the process in and out of rotation). `GET /healthz`
+touches none of the six deps — see `app.test.ts`'s own test proving this by
+building an app whose every dep is a throwing stub and confirming `/healthz`
+still returns `200`.
+
+### Deviations from spec §7
+
+- Spec §7's `merchantId?` field is dropped from `POST /intents`'s body, not
+  merely omitted-for-now: `SubmitIntentCommand` has no such field, and
+  `PaymentProposal.merchantId` always comes from the LLM's own proposal (or
+  `MockLlmClient`'s configured default), never from the caller.
+- The response envelopes are a superset of spec §7's sketched
+  `{intentId, status, proposal?}` — see "HTTP interface" above for the
+  actual shapes (`{intent, verdict}` or `{intent}`, `intent` itself a full
+  `IntentView`).
+- `X-Customer-Id` is an addition spec §7 doesn't mention at all — see
+  ADR-0014 for why it exists.
+
+The existing "Known limitation" on `Intent.autoApprove` having no production
+caller (below) is unchanged by this HTTP layer — see that section, not
+restated here.
 
 ## `AgentCoreClient` and `HttpDurableLedgerClient`
 
@@ -678,6 +804,7 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `AnthropicLlmClient` (live)
 - [x] `app/*`: `SyncIntentExecution` (step 8, first slice)
 - [x] `config.ts` (step 8, second slice)
-- [ ] Hono HTTP layer + composition root + `main.ts`
+- [x] Hono HTTP layer (step 8, third slice)
+- [ ] Composition root + `main.ts` (step 8, fourth and final slice)
 - [ ] Auto-approve path: client-supplied `Idempotency-Key` on `POST /intents` + an `Intent.autoApprove` caller (deferred past step 8, see "Known limitation" above)
 - [ ] End-to-end demo scenario

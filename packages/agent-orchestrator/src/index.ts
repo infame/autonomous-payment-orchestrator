@@ -7,14 +7,19 @@
  * `AgentCoreClient` port, and the `IntentRepository` port with its Postgres
  * and in-memory adapters — plus step 6 in full: all five `app/*` use-cases,
  * `SubmitIntent`, `GetIntent`, `AnswerClarification`, `RejectIntent`, and
- * `ApproveIntent` — plus the first slice of step 8, a sixth use-case,
- * `SyncIntentExecution`: it reconciles an `executing` intent against
+ * `ApproveIntent` — plus three of step 8's four slices: a sixth use-case,
+ * `SyncIntentExecution` (reconciles an `executing` intent against
  * durable-ledger's actual workflow status, closing the gap left after
  * `ApproveIntent` where `Intent.complete`/`Intent.fail`/
  * `Intent.flagForReview` and `AgentCoreClient.getRunStatus` had no caller at
- * all, so an intent that reached `executing` would stay there forever. The
- * Hono HTTP layer, composition root, and `main.ts` that will call it are
- * still later slices of the same step (see below).
+ * all); `config.ts` (env-var parsing, not exported — see below); and now the
+ * Hono HTTP layer (`adapters/http/app.ts`, `server-schemas.ts`,
+ * `server-error-mapper.ts`) — `createAgentOrchestratorApp` wires the six
+ * use-cases behind `POST /intents`, `POST /intents/:id/{clarify,approve,
+ * reject}`, `GET /intents/:id`, and `GET /healthz`, enforcing the
+ * `X-Customer-Id` ownership check ADR-0014 decides. The composition root and
+ * `main.ts` that will actually construct real adapters and call
+ * `createAgentOrchestratorApp` are the one remaining slice of step 8.
  *
  * `MockLlmClient` and its directive grammar ARE exported (unlike
  * `durable-ledger`'s test-only fakes) — `mock` is a real runtime mode for
@@ -39,12 +44,14 @@
  * LLM's own SDK surface, unlike `InMemoryIntentRepository`/`MockLlmClient`
  * above). Not exported: `config.ts` is bootstrap-only, matching
  * `durable-ledger`'s own precedent (`packages/durable-ledger/src/index.ts`
- * doesn't export it either). Not exported because they don't exist yet: the
- * HTTP/Hono layer, composition root, and `main.ts` (step 8) — which is also
- * where `AgentCoreClient` gets wired into `ApproveIntent` behind a real
- * route, and where `AnthropicLlmClient` would first become reachable
- * end-to-end via `config.ts`'s `LLM_MODE` switch, once a composition root
- * actually reads it.
+ * doesn't export it either). `adapters/http/request.ts` is not exported
+ * either — its `requireCustomerId`/`readJsonBody` are internal wiring for
+ * `app.ts`, matching the same non-export convention both
+ * `durable-ledger`'s and `pay-core`'s own `request.ts` already follow. Not
+ * exported because they don't exist yet: the composition root and
+ * `main.ts` (step 8's last slice) — which is where `AnthropicLlmClient`
+ * would first become reachable end-to-end via `config.ts`'s `LLM_MODE`
+ * switch, once a composition root actually reads it.
  */
 
 // Domain
@@ -81,6 +88,9 @@ export * from "./adapters/llm/anthropic-tools.js";
 export * from "./adapters/llm/anthropic-prompt.js";
 export * from "./adapters/llm/anthropic-llm-client.js";
 export * from "./adapters/http/durable-ledger-client.js";
+export * from "./adapters/http/app.js";
+export * from "./adapters/http/server-schemas.js";
+export * from "./adapters/http/server-error-mapper.js";
 export * from "./adapters/persistence/drizzle/schema.js";
 export * from "./adapters/persistence/drizzle/pg-intent-repository.js";
 export * from "./adapters/memory/in-memory-intent-repository.js";
