@@ -22,6 +22,8 @@ matter are summarised below.
 
 ## Status: step 9 of 9 — complete
 
+Also consumed as a library via its `exports` map by `@apo/agent-evals` (see [ADR-0016](../../docs/adr/0016-agent-evals-imports-the-built-orchestrator.md)).
+
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
 `AgentCoreClient` port with its `durable-ledger` HTTP client, and the
@@ -934,3 +936,4 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
       own `Dockerfile`, a fifth `docker-compose.yml` service wired behind
       `durable-ledger`'s healthcheck, and a `docker images build` step in
       the monorepo CI workflow (`.github/workflows/ci.yml`)
+- [x] Also consumed as a library via its `exports` map by `@apo/agent-evals` ([ADR-0016](../../docs/adr/0016-agent-evals-imports-the-built-orchestrator.md))

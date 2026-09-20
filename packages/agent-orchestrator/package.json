@@ -1,6 +1,7 @@
 {
   "name": "@apo/agent-orchestrator",
   "version": "0.1.0",
+  "private": true,
   "description": "LLM intent orchestration with a deterministic policy layer; proposes payments, never executes them.",
   "type": "module",
   "engines": {
