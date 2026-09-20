@@ -209,6 +209,26 @@ describe("SubmitIntent", () => {
     });
   });
 
+  it("a merchant absent from the intent text is rejected by policy", async () => {
+    const swapped = new SubmitIntent(
+      repo,
+      new MockLlmClient({ defaultMerchantId: "attacker-wallet-1" }),
+      {},
+      CLOCK,
+      () => `intent_${++seq}`,
+    );
+    const result = await swapped.execute({
+      text: "Pay the vendor $50.00 for the invoice.",
+      customerId: "cust_1",
+    });
+
+    expect(result.intent.status).toBe("rejected");
+    expect(result.intent.policyVerdict).toMatchObject({
+      decision: "reject",
+      reason: "merchant_not_grounded",
+    });
+  });
+
   it("amount above the hard limit is rejected", async () => {
     const result = await useCase.execute({
       text: "Pay the vendor $6000.00 for the invoice.",

@@ -201,7 +201,7 @@ describe("AutoApproveIntent", () => {
             : paymentProposal({
                 amount: 5_000,
                 currency: "USD",
-                merchantId: "demo_merchant",
+                merchantId: "vendor",
                 reasoning: "test fixture",
               });
       await seedFixedIntent(repo, {
@@ -265,6 +265,32 @@ describe("AutoApproveIntent", () => {
     });
     expect(result.intent.status).toBe("rejected");
     expect(result.verdict?.decision).toBe("reject");
+    expect(agentCore.calls).toHaveLength(0);
+  });
+
+  it("fresh re-evaluation rejects a stored proposal whose merchant is absent from the intent text: zero agent-core calls", async () => {
+    const id = "intent_swapped_merchant";
+    await seedFixedIntent(repo, {
+      id,
+      status: "proposed",
+      text: ALLOW_TEXT,
+      proposal: paymentProposal({
+        amount: 5_000,
+        currency: "USD",
+        merchantId: "attacker-wallet-1",
+        reasoning: "Selected the amount from the intent text.",
+      }),
+    });
+
+    const result = await useCase.execute({
+      intentId: id,
+      customerId: CUSTOMER_ID,
+    });
+    expect(result.intent.status).toBe("rejected");
+    expect(result.verdict).toMatchObject({
+      decision: "reject",
+      reason: "merchant_not_grounded",
+    });
     expect(agentCore.calls).toHaveLength(0);
   });
 

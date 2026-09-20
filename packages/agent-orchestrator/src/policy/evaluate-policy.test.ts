@@ -30,7 +30,7 @@ describe("evaluatePolicy", () => {
   it("grounds amounts from intentText alone when clarificationAnswer is null", () => {
     const verdict = evaluatePolicy(
       compliantProposal,
-      context({ intentText: "Pay $10.00.", clarificationAnswer: null }),
+      context({ intentText: "Pay vendor-42 $10.00.", clarificationAnswer: null }),
     );
     expect(verdict.decision).toBe("allow");
   });
@@ -125,6 +125,57 @@ describe("evaluatePolicy", () => {
       expect(verdict.reason).toBe("above_auto_approve_threshold");
       expect(verdict.detail.length).toBeGreaterThan(0);
     }
+  });
+
+  describe("merchant grounding", () => {
+    const rejectReason = (
+      verdict: ReturnType<typeof evaluatePolicy>,
+    ): string | null => (verdict.decision === "allow" ? null : verdict.reason);
+
+    it("rejects a swapped merchant even with a grounded under-threshold amount", () => {
+      const proposal = { ...compliantProposal, merchantId: "attacker-wallet-1" };
+      const verdict = evaluatePolicy(proposal, context());
+      expect(verdict.decision).toBe("reject");
+      expect(rejectReason(verdict)).toBe("merchant_not_grounded");
+    });
+
+    it("rejects, not gates, an ungrounded merchant at exactly maxAutoApproveAmount", () => {
+      const amount = DEFAULT_POLICY_CONFIG.maxAutoApproveAmount;
+      const proposal = {
+        ...compliantProposal,
+        amount,
+        merchantId: "attacker-wallet-1",
+      };
+      const verdict = evaluatePolicy(
+        proposal,
+        context({ intentText: `Pay vendor-42 ${String(amount / 100)}.` }),
+      );
+      expect(verdict.decision).toBe("reject");
+      expect(rejectReason(verdict)).toBe("merchant_not_grounded");
+    });
+
+    it("reports amount_not_grounded when both amount and merchant are ungrounded", () => {
+      const proposal = {
+        ...compliantProposal,
+        amount: 999,
+        merchantId: "attacker-wallet-1",
+      };
+      expect(rejectReason(evaluatePolicy(proposal, context()))).toBe(
+        "amount_not_grounded",
+      );
+    });
+
+    it("allows a merchant grounded only by the clarification answer", () => {
+      const proposal = { ...compliantProposal, merchantId: "acme" };
+      const verdict = evaluatePolicy(
+        proposal,
+        context({
+          intentText: "Pay $10.00 to the usual vendor.",
+          clarificationAnswer: "acme",
+        }),
+      );
+      expect(verdict.decision).toBe("allow");
+    });
   });
 
   // Spec §10 / §3.3 demo-scenario shape: an intent text with two plausible

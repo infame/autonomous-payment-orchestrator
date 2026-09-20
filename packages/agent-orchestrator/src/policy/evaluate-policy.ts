@@ -2,7 +2,10 @@ import type { PaymentProposal } from "../domain/agent-proposal.js";
 import type { PolicyConfig } from "./rules.js";
 import { POLICY_RULES, resolvePolicyConfig } from "./rules.js";
 import type { PolicyVerdict } from "./verdict.js";
-import { extractGroundedAmounts } from "./grounding.js";
+import {
+  extractGroundedAmounts,
+  extractGroundedMerchantTokens,
+} from "./grounding.js";
 
 export interface PolicyContext {
   readonly intentText: string;
@@ -33,9 +36,16 @@ export function evaluatePolicy(
       ? extractGroundedAmounts(context.clarificationAnswer)
       : []),
   ]);
+  const groundedMerchantTokens = new Set([
+    ...extractGroundedMerchantTokens(context.intentText),
+    ...(context.clarificationAnswer !== null
+      ? extractGroundedMerchantTokens(context.clarificationAnswer)
+      : []),
+  ]);
   const input = {
     proposal,
     groundedAmounts: grounded,
+    groundedMerchantTokens,
     completedIntentsLast24h: context.completedIntentsLast24h,
     config,
   };

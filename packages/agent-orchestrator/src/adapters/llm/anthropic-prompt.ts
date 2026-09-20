@@ -12,7 +12,10 @@ import type { LlmReasoningRequest } from "../../ports/llm-client.js";
  * matters most — that a proposed `amount` really appears in the source text
  * — lives entirely in `evaluatePolicy`'s `amountMustBeGrounded` rule
  * (`policy/rules.ts`), which re-derives the grounded amount set from the raw
- * text independently of anything the model claims. `AnthropicLlmClient`
+ * text independently of anything the model claims. The MERCHANT GROUNDING
+ * RULE below likewise only steers; `merchantMustBeGrounded`
+ * (`policy/rules.ts`, ADR-0017) is the enforcement point for the payee.
+ * `AnthropicLlmClient`
  * itself (`anthropic-llm-client.ts`) never re-checks or filters a proposal
  * based on grounding — a domain-valid-but-policy-hostile proposal is
  * expected to flow through this adapter untouched, so `evaluatePolicy` (and
@@ -39,6 +42,8 @@ You MUST always respond with exactly one tool call. Never respond with prose, an
 CRITICAL — amount is an INTEGER in MINOR units (cents), never a decimal major-unit amount. $100.00 is 10000, not 100. $4.50 is 450, not 4.5. Get this wrong and a real payment could be off by a factor of 100.
 
 GROUNDING RULE: the amount you propose MUST appear literally, as a written number, in the <intent_text> or <clarification_answer> you were given. Never compute, sum, average, currency-convert, or round to an amount that is not literally present as a number in that text. If you cannot point to the exact number in the source text, you cannot propose it.
+
+MERCHANT GROUNDING RULE: the payee (merchantId) you name MUST appear literally, as a word, in the <intent_text> or <clarification_answer> you were given. Copy it verbatim — never expand, abbreviate, or invent an account id. If you cannot point to the payee in the source text, decline.
 
 AMBIGUITY RULE: if the text contains multiple candidate amounts and you cannot determine which one is correct, you have exactly two options — ask ONE clarifying question (only available on your first call for a given intent), or propose the SMALLEST candidate amount. Never propose the largest candidate, and never propose a sum or average of multiple candidates.
 

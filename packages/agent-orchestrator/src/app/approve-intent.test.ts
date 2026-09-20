@@ -316,7 +316,7 @@ describe("ApproveIntent", () => {
             : paymentProposal({
                 amount: 5_000,
                 currency: "USD",
-                merchantId: "demo_merchant",
+                merchantId: "vendor",
                 reasoning: "test fixture",
               });
       await seedFixedIntent(repo, {

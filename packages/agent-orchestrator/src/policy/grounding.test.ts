@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { extractGroundedAmounts } from "./grounding.js";
+import {
+  extractGroundedAmounts,
+  extractGroundedMerchantTokens,
+} from "./grounding.js";
 
 function grounded(text: string): number[] {
   return [...extractGroundedAmounts(text)].sort((a, b) => a - b);
@@ -68,5 +71,63 @@ describe("extractGroundedAmounts", () => {
   // 50.00, an incorrect fragment, not the intended 1200.50.
   it("does not support European 1.200,50 formatting", () => {
     expect(grounded("1.200,50")).toEqual([50 * 100]);
+  });
+});
+
+describe("extractGroundedMerchantTokens", () => {
+  const tokens = (text: string): string[] =>
+    [...extractGroundedMerchantTokens(text)].sort();
+
+  it("lower-cases tokens", () => {
+    expect(tokens("Pay AcMe")).toEqual(["acme", "pay"]);
+  });
+
+  it("keeps - and _ token-internal", () => {
+    const set = extractGroundedMerchantTokens("Pay vendor-42 or demo_merchant");
+    expect(set.has("vendor-42")).toBe(true);
+    expect(set.has("demo_merchant")).toBe(true);
+  });
+
+  it("splits on punctuation", () => {
+    const set = extractGroundedMerchantTokens("acme, inc.");
+    expect(set.has("acme")).toBe(true);
+    expect(set.has("inc")).toBe(true);
+  });
+
+  it("does not ground acme from acmecorp-attacker", () => {
+    expect(extractGroundedMerchantTokens("acmecorp-attacker").has("acme")).toBe(
+      false,
+    );
+  });
+
+  it("does not ground acmecorp-attacker from 'pay acme'", () => {
+    expect(
+      extractGroundedMerchantTokens("pay acme").has("acmecorp-attacker"),
+    ).toBe(false);
+  });
+
+  it("drops digit-only tokens", () => {
+    const set = extractGroundedMerchantTokens(
+      "Pay $120 to acme for invoice 42",
+    );
+    expect(set.has("acme")).toBe(true);
+    expect(set.has("120")).toBe(false);
+    expect(set.has("42")).toBe(false);
+  });
+
+  it("self-grounds a sim.merchant directive id", () => {
+    expect(
+      extractGroundedMerchantTokens("Pay $5 sim.merchant.vendor-42").has(
+        "vendor-42",
+      ),
+    ).toBe(true);
+  });
+
+  it("is total: empty, punctuation-only and huge inputs never throw", () => {
+    expect(extractGroundedMerchantTokens("").size).toBe(0);
+    expect(extractGroundedMerchantTokens("!?.,;:$#@ \n\t").size).toBe(0);
+    expect(() =>
+      extractGroundedMerchantTokens("a-b_c ".repeat(2_000)),
+    ).not.toThrow();
   });
 });

@@ -109,6 +109,7 @@ export function resolvePolicyConfig(
 export interface RuleInput {
   readonly proposal: PaymentProposal;
   readonly groundedAmounts: ReadonlySet<number>;
+  readonly groundedMerchantTokens: ReadonlySet<string>;
   readonly completedIntentsLast24h: number;
   readonly config: PolicyConfig;
 }
@@ -132,6 +133,19 @@ export const amountMustBeGrounded: PolicyRule = (input) =>
         decision: "reject",
         reason: "amount_not_grounded",
         detail: "Proposed amount does not appear in the intent text",
+      };
+
+/**
+ * Must read ONLY `input.proposal.merchantId` — never `input.proposal.reasoning`.
+ * NEVER echo the merchant id in `detail`: it is model-controlled text.
+ */
+export const merchantMustBeGrounded: PolicyRule = (input) =>
+  input.groundedMerchantTokens.has(input.proposal.merchantId.toLowerCase())
+    ? null
+    : {
+        decision: "reject",
+        reason: "merchant_not_grounded",
+        detail: "Proposed merchant does not appear in the intent text",
       };
 
 export const maxHardLimit: PolicyRule = (input) =>
@@ -174,10 +188,15 @@ export const maxAutoApprove: PolicyRule = (input) =>
  * currency is known to be an allowlisted, similarly-scaled one.
  * `amountMustBeGrounded` is second, before any limit, because a fabricated
  * amount must never be merely gated — it is always a hard reject.
+ * `merchantMustBeGrounded` follows for the same reason (a payee absent from
+ * the user's text is fabricated): it is a hard reject and must precede
+ * `maxAutoApprove`, or an under/at-threshold swapped payee could be gated
+ * or allowed instead of rejected.
  */
 export const POLICY_RULES: readonly PolicyRule[] = [
   currencyAllowed,
   amountMustBeGrounded,
+  merchantMustBeGrounded,
   maxHardLimit,
   dailyRateLimit,
   maxAutoApprove,

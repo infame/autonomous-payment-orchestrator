@@ -46,3 +46,34 @@ export function extractGroundedAmounts(text: string): ReadonlySet<number> {
   }
   return amounts;
 }
+
+// Mirrors agent-proposal.ts's private MERCHANT_ID charset (same precedent as
+// anthropic-tools.ts): everything outside it separates tokens.
+const MERCHANT_TOKEN_SEPARATOR = /[^A-Za-z0-9_-]+/;
+const DIGITS_ONLY = /^\d+$/;
+
+/**
+ * Every candidate PAYEE token in `text`, lower-cased. Split on everything
+ * outside [A-Za-z0-9_-] (exactly agent-proposal.ts's private MERCHANT_ID
+ * charset) so an id is compared as a WHOLE token, never a substring.
+ * "Pay Acme-Corp $10.00" -> {"pay","acme-corp"} ("10"/"00" dropped).
+ *
+ * Digit-only tokens are EXCLUDED: every payment text contains its amount as
+ * digits, so else merchantId "120" would always be grounded in "Pay $120 to
+ * acme" (payee-side mirror of the documented reference-number quirk in
+ * `extractGroundedAmounts`).
+ *
+ * Total: never throws, empty set for empty text.
+ */
+export function extractGroundedMerchantTokens(
+  text: string,
+): ReadonlySet<string> {
+  const tokens = new Set<string>();
+  for (const raw of text.split(MERCHANT_TOKEN_SEPARATOR)) {
+    if (raw === "" || DIGITS_ONLY.test(raw)) {
+      continue;
+    }
+    tokens.add(raw.toLowerCase());
+  }
+  return tokens;
+}

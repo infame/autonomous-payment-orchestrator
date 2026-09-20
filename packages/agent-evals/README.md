@@ -4,7 +4,7 @@ Adversarial eval harness for `@apo/agent-orchestrator`: it drives the orchestrat
 
 ## Findings
 
-- **Merchant-swap gap (spec §9.1; security-reviewer rated HIGH).** The LLM-chosen `merchantId` is never grounded against the intent text nor checked against an allowlist, and `POST /intents` accepts no `merchantId` of its own, so a hostile proposal's merchant flows straight to `startPaymentWorkflow`. On the auto-approve path (an `Idempotency-Key` is supplied and the amount is under `maxAutoApprove`) the payment executes with no human in the loop. This is encoded by a characterization test plus an `it.fails` pair in `src/e2e/injection-merchant-swap.test.ts`. The fix is a separate agent-orchestrator PR: ground `merchantId` and/or add a per-customer allowlist as a reject/needs_approval rule evaluated before `maxAutoApprove`. When it lands, test (a) goes red on purpose and (b) flips to a plain `it`.
+- **Merchant-swap gap (spec §9.1): FIXED.** The LLM-chosen `merchantId` used to be neither grounded against the intent text nor checked against an allowlist, and `POST /intents` accepts no `merchantId`, so on the auto-approve path a hostile proposal's merchant reached `startPaymentWorkflow` with no human in the loop. `merchantMustBeGrounded` ([ADR-0017](../../docs/adr/0017-merchant-must-be-grounded-in-the-intent-text.md), `packages/agent-orchestrator/src/policy/rules.ts`) now rejects a proposal whose merchant is not a whole token of the intent text, before `maxAutoApprove`. `src/e2e/injection-merchant-swap.test.ts` is now a regression test. Limit: an injected id written inside the intent text is still grounded, and there is no registry/allowlist.
 
 ## Running
 

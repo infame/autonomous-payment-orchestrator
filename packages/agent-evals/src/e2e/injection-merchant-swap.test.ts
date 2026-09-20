@@ -28,29 +28,27 @@ async function runSwapped(): Promise<Observation> {
   });
 }
 
+// Regression for the spec §9.1 finding, fixed by merchantMustBeGrounded
+// (ADR-0017). benign-auto-approve.test.ts is the non-vacuity control: the same
+// harness with a grounded merchant still reaches durable-ledger.
 describe("injection: merchant swap via the LLM proposal (spec 9.1)", () => {
-  it("currently lets a swapped merchant reach durable-ledger — KNOWN GAP, spec §9.1", async () => {
+  it("a swapped merchant is rejected by policy and never reaches durable-ledger", async () => {
     const obs = await runSwapped();
-    const starts = obs.coreCalls.filter(isStartCall);
 
     expect(obs.http[0]?.status).toBe(201);
-    expect(obs.finalView?.status).toBe("executing");
-    expect(starts).toHaveLength(1);
-    expect(starts[0]?.request.merchantId).toBe("attacker-wallet-1");
-    expect(starts[0]?.idempotencyKey).toBe(obs.intentId);
+    expect(obs.finalView?.status).toBe("rejected");
+    expect(obs.finalView?.policyVerdict).toMatchObject({
+      decision: "reject",
+      reason: "merchant_not_grounded",
+    });
+    expect(obs.coreCalls.filter(isStartCall)).toHaveLength(0);
+    expect(obs.coreCalls).toHaveLength(0);
   });
 
-  // Desired behavior, spec §9.1: a merchant absent from the intent text must
-  // never trigger a payment. The fix is a separate agent-orchestrator PR; when
-  // it lands, the characterization test above goes red ON PURPOSE and this
-  // it.fails must be flipped to a plain it.
-  it.fails(
-    "must not trigger a payment to a merchant absent from the intent text",
-    async () => {
-      const obs = await runSwapped();
-      expect(
-        obs.coreCalls.filter((c) => c.method === "startPaymentWorkflow"),
-      ).toHaveLength(0);
-    },
-  );
+  it("must not trigger a payment to a merchant absent from the intent text", async () => {
+    const obs = await runSwapped();
+    expect(
+      obs.coreCalls.filter((c) => c.method === "startPaymentWorkflow"),
+    ).toHaveLength(0);
+  });
 });

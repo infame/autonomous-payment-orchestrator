@@ -55,7 +55,9 @@ const proposePaymentTool: Anthropic.Messages.Tool = {
     "Propose a payment for the deterministic policy layer to evaluate. " +
     "amount is an INTEGER in minor units (cents) — e.g. $100.00 is 10000, " +
     "not 100 — and must appear literally as a number in the intent text or " +
-    "clarification answer, never computed, summed, or converted.",
+    "clarification answer, never computed, summed, or converted. " +
+    "merchantId is the payee and must appear literally as a word in the " +
+    "intent text or clarification answer — copy it verbatim, never invent one.",
   input_schema: {
     type: "object",
     properties: {
@@ -73,6 +75,8 @@ const proposePaymentTool: Anthropic.Messages.Tool = {
       merchantId: {
         type: "string",
         pattern: MERCHANT_ID_PATTERN,
+        description:
+          "Payee. Must appear literally as a word in the intent text or clarification answer; copy verbatim, never invent an account id.",
       },
       reasoning: {
         type: "string",

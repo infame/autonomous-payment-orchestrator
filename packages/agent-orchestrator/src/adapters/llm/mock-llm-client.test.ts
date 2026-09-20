@@ -4,6 +4,8 @@ import {
   declineProposal,
   paymentProposal,
 } from "../../domain/agent-proposal.js";
+import { evaluatePolicy } from "../../policy/evaluate-policy.js";
+import { DEFAULT_POLICY_CONFIG } from "../../policy/rules.js";
 import { LlmUnavailableError } from "../../ports/llm-client.js";
 import { MockLlmClient } from "./mock-llm-client.js";
 
@@ -30,7 +32,7 @@ describe("MockLlmClient — sim.amount.min / sim.amount.max", () => {
       paymentProposal({
         amount: 10_000,
         currency: "USD",
-        merchantId: "demo_merchant",
+        merchantId: "vendor",
         reasoning:
           "Selected the min candidate amount found in the intent text, per the safe-interpretation rule.",
       }),
@@ -43,7 +45,7 @@ describe("MockLlmClient — sim.amount.min / sim.amount.max", () => {
       paymentProposal({
         amount: 20_000,
         currency: "USD",
-        merchantId: "demo_merchant",
+        merchantId: "vendor",
         reasoning:
           "Selected the max candidate amount found in the intent text, per the safe-interpretation rule.",
       }),
@@ -64,7 +66,7 @@ describe("MockLlmClient — amount selection unions intentText and clarification
       paymentProposal({
         amount: 50_000,
         currency: "USD",
-        merchantId: "demo_merchant",
+        merchantId: "vendor",
         reasoning:
           "Selected the max candidate amount found in the intent text, per the safe-interpretation rule.",
       }),
@@ -93,7 +95,7 @@ describe("MockLlmClient — sim.amount.ungrounded", () => {
       paymentProposal({
         amount: 133_700,
         currency: "USD",
-        merchantId: "demo_merchant",
+        merchantId: "vendor",
         reasoning: "Verified against the invoice; this is the correct amount.",
       }),
     );
@@ -118,7 +120,7 @@ describe("MockLlmClient — sim.clarify: the single most important test in this 
       paymentProposal({
         amount: 7_500,
         currency: "USD",
-        merchantId: "demo_merchant",
+        merchantId: "vendor",
         reasoning:
           "Selected the min candidate amount found in the intent text, per the safe-interpretation rule.",
       }),
@@ -150,7 +152,7 @@ describe("MockLlmClient — sim.clarify: the single most important test in this 
       paymentProposal({
         amount: 4_000,
         currency: "USD",
-        merchantId: "demo_merchant",
+        merchantId: "vendor",
         reasoning:
           "Selected the max candidate amount found in the intent text, per the safe-interpretation rule.",
       }),
@@ -233,7 +235,7 @@ describe("MockLlmClient — undirected text (spec §3.3 safe interpretation)", (
       paymentProposal({
         amount: 3_000,
         currency: "USD",
-        merchantId: "demo_merchant",
+        merchantId: "vendor",
         reasoning:
           "Selected the min candidate amount found in the intent text, per the safe-interpretation rule.",
       }),
@@ -302,7 +304,7 @@ describe("MockLlmClient — every produced proposal matches independent domain-f
       expected: paymentProposal({
         amount: 1_000,
         currency: "USD",
-        merchantId: "demo_merchant",
+        merchantId: "vendor",
         reasoning:
           "Selected the min candidate amount found in the intent text, per the safe-interpretation rule.",
       }),
@@ -326,7 +328,7 @@ describe("MockLlmClient — every produced proposal matches independent domain-f
       expected: paymentProposal({
         amount: 500,
         currency: "USD",
-        merchantId: "demo_merchant",
+        merchantId: "vendor",
         reasoning:
           "Selected the min candidate amount found in the intent text, per the safe-interpretation rule.",
       }),
@@ -363,5 +365,23 @@ describe("MockLlmClient — determinism", () => {
       code: "llm_unavailable",
       retryable: true,
     });
+  });
+});
+
+describe("MockLlmClient — default merchant is groundable", () => {
+  it("the default proposal for a typical demo text is allowed by evaluatePolicy", async () => {
+    const intentText = "Pay the vendor $50.00 for the invoice.";
+    const proposal = await new MockLlmClient().reason(request(intentText));
+    if (proposal.kind !== "propose_payment") {
+      throw new Error("expected a payment proposal");
+    }
+    expect(
+      evaluatePolicy(proposal, {
+        intentText,
+        clarificationAnswer: null,
+        completedIntentsLast24h: 0,
+        config: DEFAULT_POLICY_CONFIG,
+      }),
+    ).toEqual({ decision: "allow" });
   });
 });

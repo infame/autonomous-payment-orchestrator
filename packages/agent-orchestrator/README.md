@@ -145,6 +145,11 @@ it has nothing to say about whether a human-supplied number is
 bound a human-supplied number, and both still run unchanged against
 whatever amount the answer grounds.
 
+The same holds for the payee: the answer also widens the grounded-*merchant*
+set, so a user can name a payee by typing it into their answer. That is by
+design — `merchantMustBeGrounded` guards against the *model* fabricating a
+payee, not against a human choosing one.
+
 ### `RejectIntent`
 
 `RejectIntent` (`src/app/reject-intent.ts`) is the single transition
@@ -585,6 +590,23 @@ about the amount is rejected exactly the same as one that says nothing at
 all — this is the direct defense against a prompt-injected invoice
 description.
 
+`merchantMustBeGrounded` applies the same idea to the payee: the proposed
+`merchantId` must be a whole, case-folded token of the intent text (or
+clarification answer), else the proposal is rejected with
+`merchant_not_grounded` before `maxAutoApprove` can auto-approve it. It closes
+the swapped-payee path on auto-approve; it does not prove the payee is
+*legitimate* — a hostile id written inside the intent text is still grounded,
+and there is no allowlist/registry (see ADR-0017).
+
+| Rule | Condition | Verdict |
+|---|---|---|
+| `currencyAllowed` | currency not in `allowedCurrencies` | reject `currency_not_allowed` |
+| `amountMustBeGrounded` | amount not a literal number in the text | reject `amount_not_grounded` |
+| `merchantMustBeGrounded` | merchantId not a whole token of the text | reject `merchant_not_grounded` |
+| `maxHardLimit` | amount > `maxHardLimitAmount` | reject `hard_limit_exceeded` |
+| `dailyRateLimit` | completed intents in 24h >= `dailyRateLimit` | reject `daily_rate_limit_exceeded` |
+| `maxAutoApprove` | amount >= `maxAutoApproveAmount` | needs_approval `above_auto_approve_threshold` |
+
 The layer is split into four files, not the spec's suggested two, to keep
 the domain↔policy import graph acyclic: `Intent` stores a `PolicyVerdict`
 (so `domain/intent.ts` must be able to import from `policy/`), and
@@ -623,6 +645,8 @@ is `string | null` rather than the spec's `?: string` sketch.
 | `sim.amount.ungrounded` | Proposes an amount NOT found in the text (the adversarial case) |
 | `sim.currency.<CODE>` | Sets the proposed currency (`[A-Z]{3}`, else ignored) |
 | `sim.merchant.<id>` | Sets the proposed merchant id (`[A-Za-z0-9_-]{1,64}`, else ignored) |
+
+The mock's default merchant is `vendor` (a word present in every demo text), so it passes `merchantMustBeGrounded`. `sim.merchant.<id>` is self-grounding (the directive itself is part of the text), so the mock cannot demonstrate a `merchant_not_grounded` reject; use `new MockLlmClient({ defaultMerchantId: "..." })` for that.
 
 The grammar is deliberately **digit-free**: `sim.amount.*` never encodes a
 literal amount, it only *selects* among amounts `policy/grounding.ts`'s

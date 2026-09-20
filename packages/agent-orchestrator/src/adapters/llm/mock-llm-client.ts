@@ -52,6 +52,20 @@ import { mergeDirectives, parseDirectives } from "./directives.js";
  * one directive here that produces a genuinely adversarial, non-tautological
  * case worth asserting a `reject` against.
  *
+ * ## Why the default merchant must stay groundable
+ *
+ * `merchantMustBeGrounded` (`policy/rules.ts`, ADR-0017) rejects any proposal
+ * whose merchantId is not a whole token of the intent text. The default
+ * merchant is therefore `vendor`, a word present in every demo text ("Pay the
+ * vendor ..."); the former `demo_merchant` would be rejected everywhere.
+ * `sim.merchant.<id>` is SELF-GROUNDING: the directive is scanned out of
+ * `intentText` and the token extractor splits on '.', so
+ * `sim.merchant.vendor-42` puts `vendor-42` into the grounded set. The mock
+ * therefore cannot demo a `merchant_not_grounded` reject via directives; an
+ * in-package e2e of the rule must use
+ * `new MockLlmClient({ defaultMerchantId: "attacker-wallet-1" })`. There is
+ * deliberately no reserved `sim.merchant.ungrounded`.
+ *
  * ## `sim.clarify` only fires on the first pass
  *
  * `Intent`'s own state machine (`domain/intent.ts`) has no
@@ -83,7 +97,7 @@ export interface MockLlmConfig {
 
 const DEFAULT_OUTCOME: MockOutcome = { kind: "payment", selector: "min" };
 const DEFAULT_CURRENCY = "USD";
-const DEFAULT_MERCHANT_ID = "demo_merchant";
+const DEFAULT_MERCHANT_ID = "vendor";
 /**
  * A safe-integer minor-units amount used only when `sim.amount.ungrounded`
  * fires against text with zero candidate amounts (nothing to add 1 to).

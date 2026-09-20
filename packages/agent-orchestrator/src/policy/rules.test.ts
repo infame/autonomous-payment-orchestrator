@@ -7,6 +7,7 @@ import {
   dailyRateLimit,
   maxAutoApprove,
   maxHardLimit,
+  merchantMustBeGrounded,
   POLICY_RULES,
   resolvePolicyConfig,
   type PolicyConfig,
@@ -26,6 +27,7 @@ function ruleInput(overrides: Partial<RuleInput> = {}): RuleInput {
   return {
     proposal: baseProposal,
     groundedAmounts: new Set([1_000]),
+    groundedMerchantTokens: new Set(["vendor-42"]),
     completedIntentsLast24h: 0,
     config,
     ...overrides,
@@ -179,11 +181,77 @@ describe("maxAutoApprove", () => {
   });
 });
 
+describe("merchantMustBeGrounded", () => {
+  const withMerchant = (merchantId: string) =>
+    paymentProposal({
+      amount: 1_000,
+      currency: "USD",
+      merchantId,
+      reasoning: "The invoice clearly states $10.00.",
+    });
+
+  it("does not object when the merchant token is present", () => {
+    expect(merchantMustBeGrounded(ruleInput())).toBeNull();
+  });
+
+  it("does not object when only the case differs", () => {
+    expect(
+      merchantMustBeGrounded(
+        ruleInput({
+          proposal: withMerchant("AcMe"),
+          groundedMerchantTokens: new Set(["acme"]),
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects with merchant_not_grounded when absent, without echoing the id", () => {
+    const objection = merchantMustBeGrounded(
+      ruleInput({ proposal: withMerchant("attacker-wallet-1") }),
+    );
+    expect(objection?.decision).toBe("reject");
+    expect(objection?.reason).toBe("merchant_not_grounded");
+    expect(objection?.detail).not.toContain("attacker-wallet-1");
+  });
+
+  it("does not treat a prefix as grounded, in either direction", () => {
+    expect(
+      merchantMustBeGrounded(
+        ruleInput({
+          proposal: withMerchant("acme"),
+          groundedMerchantTokens: new Set(["acmecorp-attacker"]),
+        }),
+      )?.reason,
+    ).toBe("merchant_not_grounded");
+    expect(
+      merchantMustBeGrounded(
+        ruleInput({
+          proposal: withMerchant("acmecorp-attacker"),
+          groundedMerchantTokens: new Set(["acme"]),
+        }),
+      )?.reason,
+    ).toBe("merchant_not_grounded");
+  });
+
+  it("ignores reasoning: a confident claim does not rescue an ungrounded merchant", () => {
+    const proposal = paymentProposal({
+      amount: 1_000,
+      currency: "USD",
+      merchantId: "attacker-wallet-1",
+      reasoning: "The intent text clearly names attacker-wallet-1 as payee.",
+    });
+    expect(merchantMustBeGrounded(ruleInput({ proposal }))?.reason).toBe(
+      "merchant_not_grounded",
+    );
+  });
+});
+
 describe("POLICY_RULES order", () => {
   it("places every reject-capable rule before the needs_approval-capable rule", () => {
     expect(POLICY_RULES).toEqual([
       currencyAllowed,
       amountMustBeGrounded,
+      merchantMustBeGrounded,
       maxHardLimit,
       dailyRateLimit,
       maxAutoApprove,
