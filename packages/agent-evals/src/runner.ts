@@ -14,8 +14,10 @@
  * captured before the first exchange, so a reused injected recorder's earlier
  * (foreign) calls are excluded; `coreCallIndexes` stay absolute journal indexes.
  *
- * `coreCallIndexes` attribution (core journal indexes made during one
- * exchange) is only correct because requests are awaited sequentially;
+ * `coreCallIndexes` (core journal indexes made DURING one exchange) are
+ * ABSOLUTE journal indexes: match them against `RecordedCoreCall.index`, not
+ * against a position in `Observation.coreCalls`, which is sliced from the
+ * run's start. Attribution is only correct because requests are awaited sequentially;
  * revisit when parallel-duplicate scenarios arrive.
  */
 import { createInMemoryAgentOrchestrator } from "@apo/agent-orchestrator";
@@ -62,7 +64,11 @@ export interface HttpExchange {
   readonly idempotencyKey: string | undefined;
   readonly status: number;
   readonly body: unknown;
-  /** Core journal indexes made DURING this exchange. */
+  /**
+   * Core journal indexes made DURING this exchange. ABSOLUTE journal indexes:
+   * match them against `RecordedCoreCall.index`, not against a position in
+   * `Observation.coreCalls`, which is sliced from the run's start.
+   */
   readonly coreCallIndexes: readonly number[];
 }
 
@@ -77,6 +83,11 @@ export interface Observation {
   readonly coreCalls: readonly RecordedCoreCall[];
   readonly http: readonly HttpExchange[];
   readonly policy: PolicyConfig;
+}
+
+interface ExchangeResult {
+  readonly status: number;
+  readonly view: IntentViewJson | null;
 }
 
 interface IntentEnvelopeJSON {
@@ -106,7 +117,7 @@ export async function runScenario(
     method: "GET" | "POST",
     path: string,
     opts: { body?: unknown; idempotencyKey?: string } = {},
-  ): Promise<IntentViewJson | null> => {
+  ): Promise<ExchangeResult> => {
     const before = agentCore.calls.length;
     const res = await app.request(path, {
       method,
@@ -137,7 +148,7 @@ export async function runScenario(
     });
     const view = (parsed as IntentEnvelopeJSON).intent;
     if (view !== undefined) views.push(view);
-    return view ?? null;
+    return { status: res.status, view: view ?? null };
   };
 
   const submitted = await exchange("POST", "/intents", {
@@ -146,19 +157,24 @@ export async function runScenario(
       ? {}
       : { idempotencyKey: input.idempotencyKey }),
   });
-  intentId = submitted?.id ?? null;
+  intentId = submitted.view?.id ?? null;
 
   if (intentId !== null) {
     for (const step of input.steps ?? []) {
       switch (step.kind) {
-        case "clarify":
-          await exchange("POST", `/intents/${intentId}/clarify`, {
-            body: { answer: step.answer },
-          });
-          if (http[http.length - 1]?.status.toString().startsWith("2")) {
+        case "clarify": {
+          const result = await exchange(
+            "POST",
+            `/intents/${intentId}/clarify`,
+            {
+              body: { answer: step.answer },
+            },
+          );
+          if (result.status >= 200 && result.status < 300) {
             clarificationAnswers.push(step.answer);
           }
           break;
+        }
         case "approve":
           await exchange("POST", `/intents/${intentId}/approve`);
           break;
@@ -170,7 +186,7 @@ export async function runScenario(
           break;
       }
     }
-    finalView = await exchange("GET", `/intents/${intentId}`);
+    finalView = (await exchange("GET", `/intents/${intentId}`)).view;
   }
 
   return {

@@ -287,6 +287,15 @@ describe("AnthropicLlmClient — request assembly", () => {
     const [call] = fake.calls;
     expect(call?.params.system).toContain("SMALLEST candidate amount");
   });
+
+  it("system prompt states the merchant-grounding rule", async () => {
+    const { client, fake } = buildClient(() =>
+      toolUseMessage(DECLINE_TOOL, { reason: "n/a" }),
+    );
+    await client.reason(request("pay the invoice"));
+    const [call] = fake.calls;
+    expect(call?.params.system).toContain("MERCHANT GROUNDING RULE");
+  });
 });
 
 describe("AnthropicLlmClient — happy paths", () => {

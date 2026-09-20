@@ -30,7 +30,10 @@ describe("evaluatePolicy", () => {
   it("grounds amounts from intentText alone when clarificationAnswer is null", () => {
     const verdict = evaluatePolicy(
       compliantProposal,
-      context({ intentText: "Pay vendor-42 $10.00.", clarificationAnswer: null }),
+      context({
+        intentText: "Pay vendor-42 $10.00.",
+        clarificationAnswer: null,
+      }),
     );
     expect(verdict.decision).toBe("allow");
   });
@@ -133,7 +136,10 @@ describe("evaluatePolicy", () => {
     ): string | null => (verdict.decision === "allow" ? null : verdict.reason);
 
     it("rejects a swapped merchant even with a grounded under-threshold amount", () => {
-      const proposal = { ...compliantProposal, merchantId: "attacker-wallet-1" };
+      const proposal = {
+        ...compliantProposal,
+        merchantId: "attacker-wallet-1",
+      };
       const verdict = evaluatePolicy(proposal, context());
       expect(verdict.decision).toBe("reject");
       expect(rejectReason(verdict)).toBe("merchant_not_grounded");

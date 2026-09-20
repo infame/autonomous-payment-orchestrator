@@ -45,6 +45,9 @@ describe("injection: merchant swap via the LLM proposal (spec 9.1)", () => {
     expect(obs.coreCalls).toHaveLength(0);
   });
 
+  // Deliberately redundant with the assertion above: the original
+  // desired-behavior test, kept verbatim from the it.fails flip (ADR-0017), so
+  // the finding's own wording stays in the suite.
   it("must not trigger a payment to a merchant absent from the intent text", async () => {
     const obs = await runSwapped();
     expect(

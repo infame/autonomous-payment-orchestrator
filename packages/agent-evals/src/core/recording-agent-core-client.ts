@@ -167,7 +167,13 @@ export class RecordingAgentCoreClient implements AgentCoreClient {
     return Promise.resolve(snapshot);
   }
 
-  /** Simulates durable-ledger progressing a run. Throws if eventId is unknown. */
+  /**
+   * Simulates durable-ledger progressing a run. Throws if eventId is unknown.
+   * Every minted eventId is registered, duds included, so a dud CAN be
+   * settled: that models an ADR-0013-impossible world (a dud reads `queued`
+   * forever). Deliberate escape hatch for tests that want to feed the SUT an
+   * impossible snapshot; don't use it to fake a second real run.
+   */
   settleRun(eventId: string, patch: SettlePatch): void {
     const current = this.runsByEventId.get(eventId);
     if (current === undefined) {

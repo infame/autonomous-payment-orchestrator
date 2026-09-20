@@ -690,9 +690,12 @@ rule even against a model that ignores its own instructions.
 telling the model that `amount` is an integer in minor units (cents — "$100
 is 10000, not 100") and that a proposed amount must appear literally in the
 source text or be the *smallest* candidate when ambiguous, never the
-largest or a sum. None of that is enforcement: `reason()` itself never
+largest or a sum. Its MERCHANT GROUNDING RULE likewise only steers the
+payee. None of that is enforcement: `reason()` itself never
 re-derives or filters on grounding. That guarantee lives entirely in
-`evaluatePolicy`'s `amountMustBeGrounded` rule (`policy/rules.ts`), applied
+`evaluatePolicy`'s `amountMustBeGrounded` and `merchantMustBeGrounded`
+([ADR-0017](../../docs/adr/0017-merchant-must-be-grounded-in-the-intent-text.md))
+rules (both in `policy/rules.ts`), applied
 uniformly to every `AgentProposal` regardless of which `LlmClient` produced
 it — a domain-valid but policy-hostile proposal from `AnthropicLlmClient` is
 expected to flow through completely untouched, both for the audit trail and
@@ -955,6 +958,7 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] Hono HTTP layer (step 8, third slice)
 - [x] Composition root + `main.ts` (step 8, fourth and final slice)
 - [x] Auto-approve path: client-supplied `Idempotency-Key` on `POST /intents` + an `Intent.autoApprove` caller (deterministic `Intent.id` via [ADR-0015](../../docs/adr/0015-deterministic-intent-ids-for-auto-approve.md); `AutoApproveIntent` triggers durable-ledger on a fresh `allow`, exactly once)
+- [x] Policy rule `merchantMustBeGrounded`: the proposed payee must be a whole token of the intent text ([ADR-0017](../../docs/adr/0017-merchant-must-be-grounded-in-the-intent-text.md); closes the agent-evals merchant-swap finding on the auto-approve path)
 - [ ] End-to-end demo scenario
 - [x] Step 9: `Dockerfile` + `docker-compose` wiring + CI — the package's
       own `Dockerfile`, a fifth `docker-compose.yml` service wired behind

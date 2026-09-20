@@ -106,13 +106,27 @@ describe("extractGroundedMerchantTokens", () => {
     ).toBe(false);
   });
 
-  it("drops digit-only tokens", () => {
+  it("drops digit-only tokens (amounts and reference numbers)", () => {
     const set = extractGroundedMerchantTokens(
       "Pay $120 to acme for invoice 42",
     );
     expect(set.has("acme")).toBe(true);
     expect(set.has("120")).toBe(false);
     expect(set.has("42")).toBe(false);
+  });
+
+  it("drops tokens with no letter", () => {
+    const set = extractGroundedMerchantTokens("Pay the vendor - $50.00");
+    expect(set.has("-")).toBe(false);
+    expect(set.has("_")).toBe(false);
+    expect(set.has("--")).toBe(false);
+    expect(set.has("vendor")).toBe(true);
+  });
+
+  it("keeps a token that mixes letters, digits and hyphens", () => {
+    expect(
+      extractGroundedMerchantTokens("Pay vendor-42").has("vendor-42"),
+    ).toBe(true);
   });
 
   it("self-grounds a sim.merchant directive id", () => {

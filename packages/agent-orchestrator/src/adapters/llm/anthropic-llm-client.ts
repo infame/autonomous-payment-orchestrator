@@ -75,12 +75,14 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  *
  * `anthropic-prompt.ts`'s system prompt spends real effort steering the
  * model toward proposing only amounts that literally appear in the source
- * text, but `reason()` itself never re-derives or filters on that. The
- * amount-grounding guarantee is `evaluatePolicy`'s `amountMustBeGrounded`
- * rule (`policy/rules.ts`) alone, applied uniformly to every `AgentProposal`
- * regardless of which `LlmClient` produced it. A domain-valid but
- * policy-hostile proposal — one that passes `paymentProposal()`'s structural
- * checks but proposes an amount the text never mentions — is expected to
+ * text (and a payee the text names), but `reason()` itself never re-derives
+ * or filters on that. The grounding guarantees are `evaluatePolicy`'s
+ * `amountMustBeGrounded` (the amount) and `merchantMustBeGrounded` (the
+ * payee, ADR-0017) rules (`policy/rules.ts`) alone, applied uniformly to
+ * every `AgentProposal` regardless of which `LlmClient` produced it. A
+ * domain-valid but policy-hostile proposal — one that passes
+ * `paymentProposal()`'s structural checks but proposes an amount the text
+ * never mentions, or a payee the text never names — is expected to
  * flow through this adapter completely untouched. Two things depend on that:
  * the audit trail (what did the model actually say, unfiltered) and policy
  * testing parity (`MockLlmClient` and this class must present `evaluatePolicy`
