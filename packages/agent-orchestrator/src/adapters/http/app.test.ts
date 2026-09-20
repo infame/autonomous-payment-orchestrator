@@ -121,7 +121,11 @@ async function post(
       "Content-Type": "application/json",
       "X-Customer-Id": opts.customerId,
     },
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    // `exactOptionalPropertyTypes` requires `body` to be omitted entirely
+    // rather than explicitly set to `undefined` — a conditional spread,
+    // not `body: opts.body === undefined ? undefined : ...`, is what
+    // `RequestInit["body"]` (no `undefined` in its own type) accepts.
+    ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
   });
 }
 

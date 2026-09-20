@@ -70,3 +70,17 @@ non-existence, not just the README. Cheap recipe:
 `grep -rn "don't exist yet\|no config\|not built yet\|LLM_MODE" packages/<pkg>/src --exclude="*.test.ts"`.
 The in-repo fix phrasing to copy is `durable-ledger/src/index.ts`'s
 "Not exported: `config.ts`/`main.ts` are bootstrap-only".
+
+**Cross-package drift, compose edition (2026-09-19,
+`chore/agent-orchestrator-docker-ci`):** the trio rule extends past the
+package's own README. Each package's `### Docker` section opens with a
+literal service count — "This now starts all four services — `postgres`,
+`pay-core`, `inngest`, and `durable-ledger`"
+(`packages/durable-ledger/README.md:620`). Adding a 5th compose service in
+`agent-orchestrator`'s branch made that sentence false, and the branch only
+updated its own README. **When a diff adds or removes a `docker-compose.yml`
+service, grep every `packages/*/README.md` for `N services` / the explicit
+service list**: `grep -rn "starts all .* services" packages/*/README.md`.
+`pay-core`'s equivalent section is phrased without a count ("Postgres,
+boot-time migrations, and the `pay-core` HTTP service") and does not drift —
+that phrasing is the one to prefer when suggesting a fix.

@@ -66,3 +66,4 @@ jobs:
       - uses: actions/checkout@v7
       - run: docker build -f packages/pay-core/Dockerfile -t apo/pay-core:ci .
       - run: docker build -f packages/durable-ledger/Dockerfile -t apo/durable-ledger:ci .
+      - run: docker build -f packages/agent-orchestrator/Dockerfile -t apo/agent-orchestrator:ci .

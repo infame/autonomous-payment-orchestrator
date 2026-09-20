@@ -1,5 +1,7 @@
 # @apo/agent-orchestrator
 
+[![CI](https://github.com/infame/autonomous-payment-orchestrator/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/infame/autonomous-payment-orchestrator/actions/workflows/ci.yml)
+
 LLM intent orchestration with a deterministic policy layer, one package
 (`packages/agent-orchestrator`) in the **APO** (Autonomous Payment
 Orchestrator) monorepo — a portfolio project. It sits alongside
@@ -18,7 +20,7 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-8 of 9 complete
+## Status: step 9 of 9 — complete
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
@@ -62,8 +64,11 @@ boot the service:
    the composition root (`composition-root.ts`) + `main.ts` (see "Running
    the service" below) construct real adapters and boot the service. Step 8
    is done.
-9. Tests land alongside each step above; an end-to-end demo scenario, plus
-   a `Dockerfile`/`docker-compose` wiring and CI, still to come.
+9. Tests land alongside each step above. This step's own deliverable —
+   a `Dockerfile`, `docker-compose.yml` wiring, and CI (this step) — is
+   now done; see "Docker" under "Running the service" below and
+   `.github/workflows/ci.yml`. An end-to-end demo scenario is still to
+   come.
 
 All four of step 8's slices — `SyncIntentExecution`, `config.ts`, the Hono
 HTTP layer, and the composition root + `main.ts` — are done.
@@ -774,6 +779,26 @@ could burn paid inference calls on a restart loop instead of just flapping
 the process in and out of rotation. See "Why `/healthz` is liveness-only"
 above for the fuller argument, which applies identically here.
 
+### Docker
+
+```bash
+docker compose up -d --build      # from the monorepo root
+```
+
+This now starts all five services — `postgres`, `pay-core`, `inngest`,
+`durable-ledger`, and `agent-orchestrator` — and converges on its own:
+`agent-orchestrator` waits for `postgres` (migrations) and for
+`durable-ledger` to be healthy before Compose considers it startable, and
+it runs in `LLM_MODE=mock` with no Anthropic credentials needed by default.
+`LLM_MODE=live ANTHROPIC_API_KEY=sk-... docker compose up -d` is the live
+path — the key is never written into `docker-compose.yml` itself, only
+passed through from the host shell. `PAYMENT_METHOD_TOKEN` defaults to a
+demo placeholder and is overridable from the host the same way. As with
+both sibling services, the compose healthcheck hits the liveness-only
+`/healthz`, so `service_healthy` here means "this process is up," not
+"Postgres/durable-ledger/Anthropic are reachable" — see "Why `/healthz` is
+liveness-only" above.
+
 ## Running the tests
 
 ```bash
@@ -850,4 +875,7 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] Composition root + `main.ts` (step 8, fourth and final slice)
 - [ ] Auto-approve path: client-supplied `Idempotency-Key` on `POST /intents` + an `Intent.autoApprove` caller (deferred past step 8, see "Known limitation" above)
 - [ ] End-to-end demo scenario
-- [ ] Step 9: `Dockerfile` + `docker-compose` wiring + CI
+- [x] Step 9: `Dockerfile` + `docker-compose` wiring + CI — the package's
+      own `Dockerfile`, a fifth `docker-compose.yml` service wired behind
+      `durable-ledger`'s healthcheck, and a `docker images build` step in
+      the monorepo CI workflow (`.github/workflows/ci.yml`)

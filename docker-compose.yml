@@ -98,5 +98,47 @@ services:
       retries: 10
       start_period: 10s
 
+  agent-orchestrator:
+    build:
+      context: .
+      dockerfile: packages/agent-orchestrator/Dockerfile
+    depends_on:
+      postgres:
+        # Load-bearing: MIGRATE_ON_BOOT defaults to true, and main.ts
+        # process.exit(1)s if migrations can't run.
+        condition: service_healthy
+      durable-ledger:
+        # Convenience ordering only — nothing at boot calls durable-ledger;
+        # it's needed at approve/sync time, not startup.
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://apo:apo@postgres:5432/apo
+      DURABLE_LEDGER_URL: http://durable-ledger:3100
+      # pm_demo_token is a placeholder value, not a real credential or a
+      # real token pattern — PAYMENT_METHOD_TOKEN is a required field with
+      # no meaningful default, so this just satisfies boot validation for
+      # local/demo use.
+      PAYMENT_METHOD_TOKEN: ${PAYMENT_METHOD_TOKEN:-pm_demo_token}
+      PORT: "3200"
+      LLM_MODE: ${LLM_MODE:-mock}
+      # Deliberately a bare key (no `${ANTHROPIC_API_KEY:-}` default),
+      # empirically verified against this Compose engine: a bare key passes
+      # the host var through and leaves it genuinely ABSENT in the
+      # container when unset on the host. The `${...:-}` form instead makes
+      # the variable PRESENT but EMPTY, which fails config.ts's
+      # `z.string().min(1).optional()` schema (`.optional()` only fires on
+      # `undefined`, not on an empty string) and refuses to boot even in
+      # the default mock-mode path. Do not "simplify" this to `${...:-}`.
+      ANTHROPIC_API_KEY:
+    ports:
+      - "3200:3200"
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3200/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
 volumes:
   apo_postgres_data:

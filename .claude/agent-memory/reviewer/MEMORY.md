@@ -9,3 +9,4 @@
 - [Mirrored durable-ledger types lose invariants](mirrored-type-invariants.md) — check snapshot-field reasoning against the producer's code, not agent-orchestrator's hand-written mirror.
 - [config.ts env `FOO=` trap](config-env-empty-string-trap.md) — blank env lines coerce to 0; the two accepted fixes (.positive() vs z.preprocess) and the whitespace-only residual.
 - [Guard-ordering tests go vacuous](guard-ordering-test-vacuity.md) — check the seed reaches the guarded branch AND that each assertion can observe the side effect (FIXED_CLOCK, fake `calls`).
+- [Reviewing Docker/compose/CI slices](infra-docker-compose-review.md) — sibling Dockerfiles are a `diff`, not a read; compose bare `FOO:` vs `${FOO:-}` is load-bearing.
