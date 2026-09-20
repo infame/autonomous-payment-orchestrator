@@ -4,8 +4,8 @@
 - [Run the DB suites, do not just read them](verify-db-claims-by-running.md) — Postgres is usually up on :5433; probe "returns what was stored" adapter claims by running.
 - [JSDoc headers are the contract of record](doc-headers-are-load-bearing.md) — check every "always/never/null when" claim against code+tests; incl. the no-free-text-in-errors rule.
 - [README Status/order/Roadmap trio](package-readme-status-trio.md) — the three README sections restate JSDoc contracts and must all move each slice.
-- [Reviewing vendor-SDK adapters](vendor-sdk-adapter-review.md) — verify SDK claims in node_modules + a throwaway probe; walk the `cause` chain, not just the message.
-- [Prove a regression test against the pre-fix commit](verify-regression-test-against-pre-fix.md) — detached-worktree recipe; when the sandbox blocks mutating a security check, use the positive control.
+- [Reviewing vendor-SDK adapters](vendor-sdk-adapter-review.md) — probe SDK claims; walk the `cause` chain; check deferred composition choices got made.
+- [Prove a regression test against the pre-fix commit](verify-regression-test-against-pre-fix.md) — worktree recipe, positive-control fallback, and the cheap node-probe variant for canary tests.
 - [Mirrored durable-ledger types lose invariants](mirrored-type-invariants.md) — check snapshot-field reasoning against the producer's code, not agent-orchestrator's hand-written mirror.
 - [config.ts env `FOO=` trap](config-env-empty-string-trap.md) — blank env lines coerce to 0; the two accepted fixes (.positive() vs z.preprocess) and the whitespace-only residual.
 - [Guard-ordering tests go vacuous](guard-ordering-test-vacuity.md) — check the seed reaches the guarded branch AND that each assertion can observe the side effect (FIXED_CLOCK, fake `calls`).

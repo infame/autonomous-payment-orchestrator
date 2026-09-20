@@ -55,3 +55,39 @@ rewrap entirely (no `cause` argument) and adding a `merchantId`-canary scenario
 to the table-driven leak sweep, plus a `describeToolName()` charset gate on the
 raw `block.name` interpolation. Verified by running the new test against the
 pre-fix commit — see [[verify-regression-test-against-pre-fix]].
+
+**3. An earlier slice can DEFER a composition choice — check the later slice
+actually made it.** `anthropic-llm-client.ts`'s header ends its "The API key
+never reaches this class" section by saying the stronger runtime property
+(nothing in the object graph carries the key) requires passing
+`{ create: (p, o) => anthropicClient.messages.create(p, o) }`, not
+`anthropicClient.messages` itself, and that "that composition choice belongs
+to whatever constructs this class (the composition root, step 8)". Its own
+test (`anthropic-llm-client.test.ts`, the `CANARY_API_KEY` /
+`safeStringify` case) demonstrates the closure form. On
+`feat/agent-orchestrator-composition-root` (2026-09-19) the composition root
+passed `messages: anthropicClient.messages` — the type is satisfied, the
+deferred decision was silently made the weak way, and the new header claimed
+the strong property anyway ("only ever sees the narrow `{ messages: { create } }`
+surface"). Probe that settles it in one command, from the package dir:
+`node --input-type=module -e "import A from '@anthropic-ai/sdk'; const c=new A({apiKey:'SECRET'}); console.log(require('node:util').inspect({messages:c.messages}).includes('SECRET'))"`
+— `util.inspect` at DEFAULT depth (what `console.log` uses) prints the key;
+`JSON.stringify` merely throws on the circular ref, so "JSON.stringify is
+safe" is not a defense.
+
+**How to apply:** grep the previous slices' headers for "belongs to", "the
+composition root", "not built yet", "step N" — any sentence that hands a
+decision forward is a checklist item for the slice that receives it. "The
+types line up" never discharges a deferred *runtime* property.
+
+**Outcome (2026-09-19, re-review):** fixed the strong way — the live branch
+now passes `{ create: (params, options_) => anthropicClient.messages.create(
+params, options_) }`, and `composition-root.test.ts` pins it with a
+`CANARY_API_KEY` + `inspect(client, { depth: null })` containment test.
+Verified both halves independently: the SDK probe still leaks at default AND
+unbounded depth, and re-creating `AnthropicLlmClient`'s
+`constructor(private readonly options)` shape in a node one-liner shows
+pre-fix `true` / post-fix `false` — see [[verify-regression-test-against-pre-fix]].
+`util.inspect` does not walk closure scopes, which is the whole reason the
+closure form holds; any future "just pass the resource, the type matches"
+regression is caught by that one test.

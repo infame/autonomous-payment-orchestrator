@@ -18,7 +18,7 @@ that's the right architecture. Full spec is kept local-only
 (`docs/todo/03-agent-orchestrator.md`, not in this repo); the sections that
 matter are summarised below.
 
-## Status: steps 1-7 of 9 complete, plus the first three slices of step 8
+## Status: steps 1-8 of 9 complete
 
 This package currently contains the domain aggregate, the deterministic
 policy layer, the `LlmClient` port with its mock adapter, the
@@ -27,10 +27,11 @@ policy layer, the `LlmClient` port with its mock adapter, the
 1-5 of the spec's own implementation order (§14) — plus all five of step
 6's `app/*` use-cases: `SubmitIntent`, `GetIntent`, `AnswerClarification`,
 `RejectIntent`, and `ApproveIntent` — plus step 7, `AnthropicLlmClient`,
-the live `LlmClient` adapter — plus a sixth `app/*` use-case,
-`SyncIntentExecution` (step 8's first slice), `config.ts` (step 8's second
-slice), and now the Hono HTTP layer (step 8's third slice — see "HTTP
-interface" below):
+the live `LlmClient` adapter — plus all four of step 8's slices: a sixth
+`app/*` use-case, `SyncIntentExecution`; `config.ts`; the Hono HTTP layer
+(see "HTTP interface" below); and the composition root + `main.ts` (see
+"Running the service" below) that actually construct real adapters and
+boot the service:
 
 1. **`src/domain/`** — `Intent` (the state machine) and `AgentProposal` (the
    LLM's structured output shape). No I/O.
@@ -54,30 +55,27 @@ interface" below):
    Done: see "`LlmClient`, `MockLlmClient`, and `AnthropicLlmClient`" below.
 8. A thin Hono HTTP layer + composition root + config + `main.ts`, plus the
    `app/*` use-cases the HTTP layer needs that don't fit under step 6's
-   original five — so far just `SyncIntentExecution` (below), the
-   `executing → terminal` reconciliation use-case `GET /intents/:id` now
-   calls. `config.ts` (env-var parsing) is done, and the Hono HTTP layer
-   (`adapters/http/`, see "HTTP interface" below) now exists and wires all
-   six use-cases behind real routes; the composition root and `main.ts`
-   that will construct real adapters and call it remain.
-9. Tests land alongside each step above; an end-to-end demo scenario last.
+   original five — `SyncIntentExecution` (below), the `executing → terminal`
+   reconciliation use-case `GET /intents/:id` now calls. `config.ts`
+   (env-var parsing) is done, the Hono HTTP layer (`adapters/http/`, see
+   "HTTP interface" below) wires all six use-cases behind real routes, and
+   the composition root (`composition-root.ts`) + `main.ts` (see "Running
+   the service" below) construct real adapters and boot the service. Step 8
+   is done.
+9. Tests land alongside each step above; an end-to-end demo scenario, plus
+   a `Dockerfile`/`docker-compose` wiring and CI, still to come.
 
-Step 8's first three slices — `SyncIntentExecution`, `config.ts`, and the
-Hono HTTP layer — exist; what remains is the composition root and
-`main.ts` that will actually construct a real `IntentRepository`/`LlmClient`/
-`AgentCoreClient` and call `createAgentOrchestratorApp` with them.
-`AgentCoreClient` is wired into two use-cases now (`ApproveIntent` and
-`SyncIntentExecution`, both below), and both are now reachable over HTTP
-(`POST /intents/:id/approve`, `GET /intents/:id`) — but only against
-whatever adapters a caller of `createAgentOrchestratorApp` constructs by
-hand, since nothing yet builds and boots those adapters itself.
-**`AnthropicLlmClient` exists as a standalone adapter (step 7) but is NOT
-wired to anything yet.** `config.ts` (`src/config.ts`) now has an
-`LLM_MODE` switch (`mock` | `live`) and validates that `live` mode carries
-an `ANTHROPIC_API_KEY`, but nothing reads that config yet — there is still
-no composition root, and no way to reach `live` mode end-to-end until step
-8 fully lands. Today `AnthropicLlmClient` is exercised only by its own unit
-tests against a fake `AnthropicMessagesApi` (see below).
+All four of step 8's slices — `SyncIntentExecution`, `config.ts`, the Hono
+HTTP layer, and the composition root + `main.ts` — are done.
+`AgentCoreClient` is wired into two use-cases (`ApproveIntent` and
+`SyncIntentExecution`, both below), and both are reachable over HTTP
+(`POST /intents/:id/approve`, `GET /intents/:id`) against real adapters
+`createAgentOrchestrator` constructs. **`AnthropicLlmClient` is now wired
+end-to-end**: `composition-root.ts`'s `createLlmClient` builds it whenever
+`config.ts`'s `LLM_MODE` switch (`mock` | `live`) resolves to `live`, and
+`loadConfig` validates that `live` mode carries an `ANTHROPIC_API_KEY` at
+boot. See "Running the service" below for how to actually reach `live`
+mode.
 
 ### `SubmitIntent` and `GetIntent` (step 6, first slice)
 
@@ -273,8 +271,7 @@ parameter object (`AgentOrchestratorAppDeps`, each use-case narrowed to
 `Pick<X, "execute">`) and constructs nothing itself — no real
 `IntentRepository`, `LlmClient`, or `AgentCoreClient` adapter is ever
 constructed inside `adapters/http/`. Building and injecting real adapters is
-the composition root's job, still step 8's one remaining slice (see
-"Status" above).
+`composition-root.ts`'s job — see "Running the service" below.
 
 | Route | Use-case | Success | Notes |
 | --- | --- | --- | --- |
@@ -732,7 +729,52 @@ plain `amount: number` (integer minor units) is the right call, not a third
 copy of the `Money` value object `pay-core` and `durable-ledger` each
 already have one of.
 
-## Running
+## Running the service
+
+```bash
+docker compose up -d postgres                 # from the monorepo root; postgres:17-alpine on :5433
+# in another terminal, or already running: durable-ledger itself (see its own README)
+
+DATABASE_URL=postgres://apo:apo@localhost:5433/apo \
+DURABLE_LEDGER_URL=http://localhost:3100 \
+PAYMENT_METHOD_TOKEN=pm_demo_token \
+pnpm --filter @apo/agent-orchestrator start   # after `pnpm --filter @apo/agent-orchestrator build`
+```
+
+`main.ts` loads `config.ts`'s Zod-validated `AppConfig` from the environment,
+conditionally applies pending migrations (`MIGRATE_ON_BOOT`, default
+`true`), builds the service via `createAgentOrchestrator(...)`
+(`src/composition-root.ts`), and serves it with `@hono/node-server`, with
+the same SIGTERM/SIGINT graceful-shutdown-then-force-exit pattern as
+`pay-core`'s and `durable-ledger`'s own `main.ts`.
+
+Notable env vars beyond `DATABASE_URL`/`DURABLE_LEDGER_URL`/
+`PAYMENT_METHOD_TOKEN`/`PORT`/`HOST`:
+
+- `LLM_MODE` — `mock` (default) or `live`. `mock` needs no API key at all —
+  `main.ts` builds `MockLlmClient` and the service is fully runnable without
+  any Anthropic credentials.
+- `ANTHROPIC_API_KEY` — required, and boot-validated (`loadConfig`'s own
+  `superRefine`, re-checked again in `main.ts`'s `buildLlmOptions` — see its
+  own doc comment for why both checks exist), the moment `LLM_MODE=live`.
+  Never logged.
+- `ANTHROPIC_MODEL` — default `claude-sonnet-5`.
+- `POLICY_ALLOWED_CURRENCIES`, `POLICY_MAX_AUTO_APPROVE_AMOUNT`,
+  `POLICY_MAX_HARD_LIMIT_AMOUNT`, `POLICY_DAILY_RATE_LIMIT` — see
+  `config.ts` for defaults; `createAgentOrchestrator` runs them through
+  `resolvePolicyConfig` at boot, so a bad value (e.g. a zero-decimal
+  currency) fails loudly before the service ever starts serving traffic.
+- `MIGRATE_ON_BOOT` — default `true`.
+
+`GET /healthz` is liveness-only, deliberately: it does NOT ping Postgres,
+`durable-ledger`, or Anthropic. Pinging any of those on every load-balancer
+probe interval would be wasteful at best and dangerous at worst — Anthropic
+in particular, where a tight probe interval combined with a real outage
+could burn paid inference calls on a restart loop instead of just flapping
+the process in and out of rotation. See "Why `/healthz` is liveness-only"
+above for the fuller argument, which applies identically here.
+
+## Running the tests
 
 ```bash
 pnpm install                               # from the monorepo root
@@ -805,6 +847,7 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `app/*`: `SyncIntentExecution` (step 8, first slice)
 - [x] `config.ts` (step 8, second slice)
 - [x] Hono HTTP layer (step 8, third slice)
-- [ ] Composition root + `main.ts` (step 8, fourth and final slice)
+- [x] Composition root + `main.ts` (step 8, fourth and final slice)
 - [ ] Auto-approve path: client-supplied `Idempotency-Key` on `POST /intents` + an `Intent.autoApprove` caller (deferred past step 8, see "Known limitation" above)
 - [ ] End-to-end demo scenario
+- [ ] Step 9: `Dockerfile` + `docker-compose` wiring + CI

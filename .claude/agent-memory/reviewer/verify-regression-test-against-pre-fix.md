@@ -1,6 +1,6 @@
 ---
 name: verify-regression-test-against-pre-fix
-description: On a re-review, prove a new regression test is not vacuous by running it against the pre-fix commit in a detached git worktree — recipe, the guard-hook cleanup gotchas, and the positive-control fallback for when the sandbox blocks mutating a security check.
+description: On a re-review, prove a new regression test is not vacuous by running it against the pre-fix commit in a detached git worktree — recipe, the guard-hook cleanup gotchas, the positive-control fallback when the sandbox blocks mutating a security check, and the cheap node-probe variant for object-graph canary tests.
 metadata:
   type: feedback
 ---
@@ -50,3 +50,16 @@ caller, showing the guarded call really does fire and really does write. If
 weakening the check. On 2026-09-19 `app.test.ts`'s
 `"executing + a completed run snapshot: 200 status completed"` was exactly
 that control for the new wrong-owner GET test.
+
+**Cheapest variant: re-create the buggy SHAPE in a one-off node probe.** When
+the regression test is a *canary containment* assertion over an object graph
+(`inspect(x,{depth:null})` must not contain a secret), you do not need a
+worktree at all: read how the class stores its ctor arg (e.g.
+`constructor(private readonly options: T) {}` ⇒ `this.options` is an own,
+walkable property), then rebuild both the pre- and post-fix shapes as plain
+objects in `node --input-type=module -e` from the package dir and inspect
+both. On 2026-09-19 that settled `composition-root.test.ts`'s API-key canary
+in one command — pre-fix shape `true`, post-fix `false` — where the worktree
+recipe above would have cost several minutes. Only valid when the property
+under test is pure object-graph reachability, with no use-case logic in the
+path; anything conditional still needs the real test on the real old code.

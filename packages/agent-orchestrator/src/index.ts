@@ -1,5 +1,5 @@
 /**
- * Public surface of `@apo/agent-orchestrator`. Steps 1-7 of the spec's
+ * Public surface of `@apo/agent-orchestrator`. Steps 1-8 of the spec's
  * implementation order (docs/todo/03-agent-orchestrator.md §14) are in place
  * — the `Intent` domain aggregate + `AgentProposal`, the pure, deterministic
  * `policy/` guardrail layer, the `LlmClient` port with its directive-driven
@@ -7,19 +7,22 @@
  * `AgentCoreClient` port, and the `IntentRepository` port with its Postgres
  * and in-memory adapters — plus step 6 in full: all five `app/*` use-cases,
  * `SubmitIntent`, `GetIntent`, `AnswerClarification`, `RejectIntent`, and
- * `ApproveIntent` — plus three of step 8's four slices: a sixth use-case,
+ * `ApproveIntent` — plus all four of step 8's slices: a sixth use-case,
  * `SyncIntentExecution` (reconciles an `executing` intent against
  * durable-ledger's actual workflow status, closing the gap left after
  * `ApproveIntent` where `Intent.complete`/`Intent.fail`/
  * `Intent.flagForReview` and `AgentCoreClient.getRunStatus` had no caller at
- * all); `config.ts` (env-var parsing, not exported — see below); and now the
- * Hono HTTP layer (`adapters/http/app.ts`, `server-schemas.ts`,
+ * all); `config.ts` (env-var parsing, not exported — see below); the Hono
+ * HTTP layer (`adapters/http/app.ts`, `server-schemas.ts`,
  * `server-error-mapper.ts`) — `createAgentOrchestratorApp` wires the six
  * use-cases behind `POST /intents`, `POST /intents/:id/{clarify,approve,
  * reject}`, `GET /intents/:id`, and `GET /healthz`, enforcing the
- * `X-Customer-Id` ownership check ADR-0014 decides. The composition root and
- * `main.ts` that will actually construct real adapters and call
- * `createAgentOrchestratorApp` are the one remaining slice of step 8.
+ * `X-Customer-Id` ownership check ADR-0014 decides; and now the composition
+ * root (`composition-root.ts`, below) that actually constructs real
+ * adapters — `createAgentOrchestrator` (Postgres + `HttpDurableLedgerClient`
+ * + mock-or-live `LlmClient`) and `createInMemoryAgentOrchestrator` (no
+ * database, caller-supplied `AgentCoreClient`) — and calls
+ * `createAgentOrchestratorApp` with them. Step 8 is complete.
  *
  * `MockLlmClient` and its directive grammar ARE exported (unlike
  * `durable-ledger`'s test-only fakes) — `mock` is a real runtime mode for
@@ -27,12 +30,12 @@
  * `pay-core` exports `SimulatorProvider`. `AnthropicLlmClient` and
  * `createAnthropicClient` (`adapters/llm/anthropic-llm-client.ts`,
  * `anthropic-client.ts`) are exported for the same reason — `live` is a
- * real runtime mode too, even though nothing wires it up yet (see below).
- * The tool name constants and `SYSTEM_PROMPT` (`anthropic-tools.ts`,
- * `anthropic-prompt.ts`) are exported as well: an external consumer
- * composing its own `AnthropicMessagesApi` test double, or wanting to
- * assert against the real tool vocabulary/system prompt, otherwise has no
- * way to reach them.
+ * real runtime mode too, now wired end-to-end via `composition-root.ts`'s
+ * `createLlmClient` and `config.ts`'s `LLM_MODE` switch. The tool name
+ * constants and `SYSTEM_PROMPT` (`anthropic-tools.ts`, `anthropic-prompt.ts`)
+ * are exported as well: an external consumer composing its own
+ * `AnthropicMessagesApi` test double, or wanting to assert against the real
+ * tool vocabulary/system prompt, otherwise has no way to reach them.
  *
  * Not exported: `db.ts`/`mappers.ts`/`errors.ts`/`migrator.ts`/
  * `run-migrate.ts`/`test-support.ts` (internal to the Postgres adapter,
@@ -47,11 +50,11 @@
  * doesn't export it either). `adapters/http/request.ts` is not exported
  * either — its `requireCustomerId`/`readJsonBody` are internal wiring for
  * `app.ts`, matching the same non-export convention both
- * `durable-ledger`'s and `pay-core`'s own `request.ts` already follow. Not
- * exported because they don't exist yet: the composition root and
- * `main.ts` (step 8's last slice) — which is where `AnthropicLlmClient`
- * would first become reachable end-to-end via `config.ts`'s `LLM_MODE`
- * switch, once a composition root actually reads it.
+ * `durable-ledger`'s and `pay-core`'s own `request.ts` already follow.
+ * `main.ts` itself is also NOT exported, same rule `pay-core`'s and
+ * `durable-ledger`'s own `main.ts` headers state — importing this package as
+ * a library must never start a listener; `main.ts` is only ever run directly
+ * (`node dist/main.js` / `pnpm start`).
  */
 
 // Domain
@@ -94,3 +97,6 @@ export * from "./adapters/http/server-error-mapper.js";
 export * from "./adapters/persistence/drizzle/schema.js";
 export * from "./adapters/persistence/drizzle/pg-intent-repository.js";
 export * from "./adapters/memory/in-memory-intent-repository.js";
+
+// Composition root
+export * from "./composition-root.js";

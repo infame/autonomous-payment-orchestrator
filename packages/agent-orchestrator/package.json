@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:integration": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgres://apo:apo@localhost:5433/apo_test} vitest run --config vitest.integration.config.ts",
     "lint": "eslint src",
+    "start": "node dist/main.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/adapters/persistence/drizzle/run-migrate.ts"
   },
