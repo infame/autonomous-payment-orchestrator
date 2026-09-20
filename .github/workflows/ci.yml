@@ -20,6 +20,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # dist/ is gitignored and @apo/agent-evals typechecks against
+      # @apo/agent-orchestrator's emitted .d.ts, so build must precede
+      # typecheck/lint/test; `pnpm -r` is topologically sorted.
+      - run: pnpm run build
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run test

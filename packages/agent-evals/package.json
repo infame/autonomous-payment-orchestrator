@@ -1,0 +1,26 @@
+{
+  "name": "@apo/agent-evals",
+  "version": "0.1.0",
+  "description": "Adversarial eval harness for @apo/agent-orchestrator: scenarios, safety invariants, metrics.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm --filter @apo/agent-orchestrator build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@apo/agent-orchestrator": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "eslint": "^9.19.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
