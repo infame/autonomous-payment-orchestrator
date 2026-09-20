@@ -84,3 +84,15 @@ service list**: `grep -rn "starts all .* services" packages/*/README.md`.
 `pay-core`'s equivalent section is phrased without a count ("Postgres,
 boot-time migrations, and the `pay-core` HTTP service") and does not drift —
 that phrasing is the one to prefer when suggesting a fix.
+
+**Resolution (2026-09-19, `chore/durable-ledger-readme-service-count`):** the
+fix landed as a list-not-a-count rewrite of
+`packages/durable-ledger/README.md:620` ("This now starts `postgres`,
+`pay-core`, `inngest` ..., `durable-ledger`, and `agent-orchestrator`"). One
+counting site survives: `packages/agent-orchestrator/README.md:788` still
+says "all five services — ...", so a 6th compose service makes *that* line
+false. Standing grep before approving any `docker-compose.yml` service
+add/remove: `grep -rn "all (four|five|six) services|starts all" packages/*/README.md -E`.
+Also: `packages/durable-ledger/README.md` fails `prettier --check` on `main`
+already (`*emphasis*` vs `_emphasis_` throughout) — do not charge that to a
+doc branch that only edits a couple of lines; see [[repo-lint-not-wired]].

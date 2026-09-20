@@ -617,8 +617,8 @@ costs nothing to keep).
 docker compose up -d --build      # from the monorepo root
 ```
 
-This now starts all four services — `postgres`, `pay-core`, `inngest` (the
-Inngest dev server), and `durable-ledger` — and converges on its own,
+This now starts `postgres`, `pay-core`, `inngest` (the Inngest dev server),
+`durable-ledger`, and `agent-orchestrator` — and converges on its own,
 without a manual restart: the Inngest dev server polls
 `http://durable-ledger:3100/api/inngest` every few seconds until this
 service answers, rather than requiring it to already be up when `inngest`
