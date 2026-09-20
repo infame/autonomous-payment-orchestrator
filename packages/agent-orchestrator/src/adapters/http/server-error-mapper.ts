@@ -8,6 +8,10 @@ import {
 } from "../../domain/errors.js";
 import { ExecutionRaceLostError } from "../../app/approve-intent.js";
 import {
+  IdempotencyConflictError,
+  IntentDerivationCollisionError,
+} from "../../app/submit-intent.js";
+import {
   IntentAlreadyExistsError,
   IntentVersionConflictError,
 } from "../../ports/intent-repository.js";
@@ -63,11 +67,13 @@ export interface MappedError {
  * unrecognized `LedgerError` subclass), there is deliberately NO catch-all
  * `OrchestratorError → 422` case here. An unmapped future `OrchestratorError`
  * falls through to the final generic 500 instead — failing CLOSED, not open.
- * That's deliberate: two `OrchestratorError` subclasses already in this
- * package (`InvalidProposalError`, `IntentAlreadyExistsError`) are genuine
- * SERVER faults (a malformed proposal that slipped past `LlmClient.reason`'s
- * own contract; an id collision on `create()`), not rejected domain state
- * transitions a caller can fix by retrying differently. Mapping every
+ * That's deliberate: three `OrchestratorError` subclasses already in this
+ * package (`InvalidProposalError`, `IntentAlreadyExistsError`,
+ * `IntentDerivationCollisionError`) are genuine SERVER faults (a malformed
+ * proposal that slipped past `LlmClient.reason`'s own contract; an id
+ * collision on `create()`; a UUIDv5 collision between two different
+ * customers' derived intent ids), not rejected domain state transitions a
+ * caller can fix by retrying differently. Mapping every
  * `OrchestratorError` to 422 by default would tell a caller "your request
  * was invalid" for something that was actually this service's own bug.
  *
@@ -132,6 +138,16 @@ export function mapError(err: unknown): MappedError {
     };
   }
 
+  // IdempotencyConflictError is an OrchestratorError subclass too — matched
+  // explicitly here, immediately after ExecutionRaceLostError, for the same
+  // "no generic OrchestratorError fallback" reason given above.
+  if (err instanceof IdempotencyConflictError) {
+    return {
+      status: 409,
+      body: { error: { code: err.code, message: err.message } },
+    };
+  }
+
   if (err instanceof IntentNotFoundError) {
     return {
       status: 404,
@@ -164,7 +180,8 @@ export function mapError(err: unknown): MappedError {
   // header, "No generic OrchestratorError → 422 fallback".
   if (
     err instanceof InvalidProposalError ||
-    err instanceof IntentAlreadyExistsError
+    err instanceof IntentAlreadyExistsError ||
+    err instanceof IntentDerivationCollisionError
   ) {
     return {
       status: 500,

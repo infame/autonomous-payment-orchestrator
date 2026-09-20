@@ -24,12 +24,36 @@ export const IntentIdParam = z.string().uuid();
 export const CustomerIdHeader = SubmitIntentCommand.shape.customerId;
 
 /**
+ * The very same schema `SubmitIntentCommand.shape.idempotencyKey` validates
+ * its (optional) `idempotencyKey` field with, unwrapped to its non-optional
+ * inner schema — same pattern as `CustomerIdHeader` above. Header parsing
+ * and `SubmitIntent`'s own validation can never drift apart.
+ */
+export const IdempotencyKeyHeader =
+  SubmitIntentCommand.shape.idempotencyKey.unwrap();
+
+/**
  * `customerId` is REMOVED from the body: identity comes from `X-Customer-Id`
  * and nowhere else (ADR-0014). Spec §7's `merchantId?` is dropped, not
  * omitted-for-now — see the README. Unknown keys stay stripped (Zod
  * default), never `.strict()`, matching pay-core's `schemas.ts`.
+ *
+ * `idempotencyKey` is ALSO removed from the body, for the same single-channel
+ * reasoning as `customerId`: it comes from the `Idempotency-Key` header
+ * (`IdempotencyKeyHeader` below) and nowhere else. Without this omission,
+ * `SubmitIntentCommand`'s own optional `idempotencyKey` field would still
+ * validate a body-level `idempotencyKey`, and `app.ts`'s handler would
+ * silently honor it whenever the header was absent — switching `SubmitIntent`
+ * into deterministic-id/replay/conflict mode via a value the auto-approve
+ * gate (which only ever reads the header-derived local variable) never sees,
+ * a second, undocumented input channel for a money-safety-relevant value.
+ * Stripping it here means a body-level `idempotencyKey` is simply ignored,
+ * identical to sending no key at all.
  */
-export const SubmitIntentBody = SubmitIntentCommand.omit({ customerId: true });
+export const SubmitIntentBody = SubmitIntentCommand.omit({
+  customerId: true,
+  idempotencyKey: true,
+});
 export type SubmitIntentBody = z.infer<typeof SubmitIntentBody>;
 
 export const AnswerClarificationBody = AnswerClarificationCommand.omit({

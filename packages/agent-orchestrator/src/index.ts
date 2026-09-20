@@ -14,15 +14,22 @@
  * `Intent.flagForReview` and `AgentCoreClient.getRunStatus` had no caller at
  * all); `config.ts` (env-var parsing, not exported — see below); the Hono
  * HTTP layer (`adapters/http/app.ts`, `server-schemas.ts`,
- * `server-error-mapper.ts`) — `createAgentOrchestratorApp` wires the six
+ * `server-error-mapper.ts`) — `createAgentOrchestratorApp` wires the seven
  * use-cases behind `POST /intents`, `POST /intents/:id/{clarify,approve,
  * reject}`, `GET /intents/:id`, and `GET /healthz`, enforcing the
- * `X-Customer-Id` ownership check ADR-0014 decides; and now the composition
- * root (`composition-root.ts`, below) that actually constructs real
- * adapters — `createAgentOrchestrator` (Postgres + `HttpDurableLedgerClient`
- * + mock-or-live `LlmClient`) and `createInMemoryAgentOrchestrator` (no
+ * `X-Customer-Id` ownership check ADR-0014 decides; and the composition root
+ * (`composition-root.ts`, below) that actually constructs real adapters —
+ * `createAgentOrchestrator` (Postgres + `HttpDurableLedgerClient` +
+ * mock-or-live `LlmClient`) and `createInMemoryAgentOrchestrator` (no
  * database, caller-supplied `AgentCoreClient`) — and calls
  * `createAgentOrchestratorApp` with them. Step 8 is complete.
+ *
+ * A seventh use-case, `AutoApproveIntent`, was added after step 8 shipped
+ * — `Intent.autoApprove`'s first production caller, wired into `POST
+ * /intents` behind an optional, caller-supplied `Idempotency-Key` header
+ * (see [ADR-0015](../../../docs/adr/0015-deterministic-intent-ids-for-auto-approve.md)
+ * and this file's own "Use-cases" section below for what's and isn't
+ * exported from it).
  *
  * `MockLlmClient` and its directive grammar ARE exported (unlike
  * `durable-ledger`'s test-only fakes) — `mock` is a real runtime mode for
@@ -54,7 +61,12 @@
  * `main.ts` itself is also NOT exported, same rule `pay-core`'s and
  * `durable-ledger`'s own `main.ts` headers state — importing this package as
  * a library must never start a listener; `main.ts` is only ever run directly
- * (`node dist/main.js` / `pnpm start`).
+ * (`node dist/main.js` / `pnpm start`). `app/derive-intent-id.ts`
+ * (`deriveIntentId`/`uuidv5`/`INTENT_ID_NAMESPACE`) is also NOT exported —
+ * it is an internal implementation detail of `SubmitIntent`'s idempotent-
+ * submission path (ADR-0015); nothing outside `submit-intent.ts` imports it
+ * in production code, and no external consumer has a legitimate reason to
+ * derive an `Intent.id` itself rather than asking `SubmitIntent` to.
  */
 
 // Domain
@@ -81,6 +93,7 @@ export * from "./app/get-intent.js";
 export * from "./app/answer-clarification.js";
 export * from "./app/reject-intent.js";
 export * from "./app/approve-intent.js";
+export * from "./app/auto-approve-intent.js";
 export * from "./app/sync-intent-execution.js";
 
 // Adapters

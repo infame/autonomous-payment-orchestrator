@@ -121,6 +121,12 @@ explicitly out of scope for this repo, the same posture `pay-core` and
   this ADR's customer-scoping mechanism says nothing about that risk and
   does not mitigate it.
 
+  **Update (2026-09-19):** discharged by
+  [ADR-0015](0015-deterministic-intent-ids-for-auto-approve.md) —
+  `POST /intents` now takes an optional `Idempotency-Key`; see the README's
+  "Auto-approve: a policy `allow` verdict's route out of `proposed`." section
+  (renamed from "Known limitation").
+
 ## Considered and rejected
 
 - **No scoping at all.** The status quo before this ADR — every `app/*`

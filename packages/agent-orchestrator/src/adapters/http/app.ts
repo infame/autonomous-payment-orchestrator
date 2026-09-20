@@ -3,6 +3,7 @@ import type { SubmitIntent } from "../../app/submit-intent.js";
 import type { GetIntent } from "../../app/get-intent.js";
 import type { AnswerClarification } from "../../app/answer-clarification.js";
 import type { ApproveIntent } from "../../app/approve-intent.js";
+import type { AutoApproveIntent } from "../../app/auto-approve-intent.js";
 import type { RejectIntent } from "../../app/reject-intent.js";
 import type { SyncIntentExecution } from "../../app/sync-intent-execution.js";
 import { IntentNotFoundError } from "../../domain/errors.js";
@@ -12,7 +13,11 @@ import {
   IntentIdParam,
   SubmitIntentBody,
 } from "./server-schemas.js";
-import { readJsonBody, requireCustomerId } from "./request.js";
+import {
+  optionalIdempotencyKey,
+  readJsonBody,
+  requireCustomerId,
+} from "./request.js";
 import { mapError } from "./server-error-mapper.js";
 
 export interface AgentOrchestratorAppDeps {
@@ -26,15 +31,24 @@ export interface AgentOrchestratorAppDeps {
   readonly getIntent: Pick<GetIntent, "execute">;
   readonly answerClarification: Pick<AnswerClarification, "execute">;
   readonly approveIntent: Pick<ApproveIntent, "execute">;
+  /**
+   * Called from exactly ONE place: `POST /intents`, immediately after a
+   * keyed `submitIntent` call lands on `proposed` (see that handler's own
+   * comment for why no ownership pre-check is needed there). Never exposed
+   * on any other route.
+   */
+  readonly autoApproveIntent: Pick<AutoApproveIntent, "execute">;
   readonly rejectIntent: Pick<RejectIntent, "execute">;
   readonly syncIntentExecution: Pick<SyncIntentExecution, "execute">;
 }
 
 /**
  * Builds the driving HTTP adapter for `agent-orchestrator`: a Hono `app`
- * wired against the six `app/*` use-cases. Route handlers stay small — read
- * header/param, validate, call the use-case, return the result — and never
- * catch, except `GET /intents/:id`'s single documented fallback below.
+ * wired against the seven `app/*` use-cases (`autoApproveIntent`, slice 2,
+ * is the newest — see `POST /intents`'s own handler comment for its single,
+ * narrow call site). Route handlers stay small — read header/param,
+ * validate, call the use-case, return the result — and never catch, except
+ * `GET /intents/:id`'s single documented fallback below.
  * Every other error propagates to the single `app.onError` below, which
  * maps it through `mapError`. Mirrors `packages/durable-ledger/src/adapters/
  * http/app.ts`'s and `packages/pay-core/src/adapters/http/app.ts`'s shape
@@ -72,9 +86,45 @@ export function createAgentOrchestratorApp(
 
   app.post("/intents", async (c) => {
     const customerId = requireCustomerId(c);
+    // Read/validate the header before touching the request body, so a
+    // malformed Idempotency-Key fails fast without consuming the stream —
+    // same ordering durable-ledger's own POST /workflows/payment uses.
+    const idempotencyKey = optionalIdempotencyKey(c);
     const body = SubmitIntentBody.parse(await readJsonBody(c));
-    const result = await deps.submitIntent.execute({ ...body, customerId });
-    return c.json({ intent: result.intent, verdict: result.verdict }, 201);
+    const submitted = await deps.submitIntent.execute({
+      ...body,
+      customerId,
+      ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+    });
+    if (
+      idempotencyKey === undefined ||
+      submitted.intent.status !== "proposed"
+    ) {
+      return c.json(
+        { intent: submitted.intent, verdict: submitted.verdict },
+        201,
+      );
+    }
+    // Only reachable with a caller-supplied key AND a fresh "proposed"
+    // status — per SubmitIntent's own header, "proposed" uniquely means
+    // policy's last evaluation returned "allow" (its only two callers,
+    // submit-intent.ts/answer-clarification.ts, both apply policy before
+    // their one write, which moves the intent off "proposed" on any other
+    // verdict). No SEPARATE ownership pre-check is done here, unlike the
+    // four id-addressed routes below: intentId here was JUST derived from
+    // THIS caller's own X-Customer-Id (deriveIntentId(customerId,
+    // idempotencyKey), inside SubmitIntent) or freshly minted — a caller can
+    // only ever address an id inside its own derivation namespace, and
+    // reaching another customer's row would require an actual UUIDv5
+    // collision. `autoApproveIntent.execute()` still takes `customerId` and
+    // checks it itself, as defense in depth (see auto-approve-intent.ts's
+    // own header, "Caller/customer scoping") — not because this call site
+    // needs it. Do NOT expose autoApproveIntent on any other route.
+    const auto = await deps.autoApproveIntent.execute({
+      intentId: submitted.intent.id,
+      customerId,
+    });
+    return c.json({ intent: auto.intent, verdict: auto.verdict }, 201);
   });
 
   app.post("/intents/:id/clarify", async (c) => {

@@ -3,6 +3,10 @@ import { z } from "zod";
 import { mapError, HttpError } from "./server-error-mapper.js";
 import { ExecutionRaceLostError } from "../../app/approve-intent.js";
 import {
+  IdempotencyConflictError,
+  IntentDerivationCollisionError,
+} from "../../app/submit-intent.js";
+import {
   IntentNotFoundError,
   InvalidIntentError,
   InvalidIntentStateError,
@@ -315,5 +319,32 @@ describe("mapError", () => {
     expect(mapped.body.error.durableLedgerEventId).toBe("evt_2");
     // Not the generic 500 that any other unmapped OrchestratorError would fall through to.
     expect(mapped.body.error.code).not.toBe("internal_error");
+  });
+
+  it("25. maps IdempotencyConflictError to 409 idempotency_conflict, key echoed (caller-supplied, safe), no durableLedgerEventId key", () => {
+    const err = new IdempotencyConflictError("idem-key-1");
+    const mapped = mapError(err);
+    expect(mapped.status).toBe(409);
+    expect(mapped.body.error.code).toBe("idempotency_conflict");
+    expect(mapped.body.error.durableLedgerEventId).toBeUndefined();
+  });
+
+  it("26. regression guard: IntentAlreadyExistsError STILL maps to 500, never 'helpfully' changed to a 4xx", () => {
+    const err = new IntentAlreadyExistsError("intent_1");
+    const mapped = mapError(err);
+    expect(mapped.status).toBe(500);
+    expect(mapped.body).toEqual({
+      error: { code: "internal_error", message: "Internal server error" },
+    });
+  });
+
+  it("27. maps IntentDerivationCollisionError to 500 internal_error, original message absent", () => {
+    const err = new IntentDerivationCollisionError("intent_1");
+    const mapped = mapError(err);
+    expect(mapped.status).toBe(500);
+    expect(mapped.body).toEqual({
+      error: { code: "internal_error", message: "Internal server error" },
+    });
+    expect(JSON.stringify(mapped.body)).not.toContain("intent_1");
   });
 });

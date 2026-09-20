@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { HttpError } from "./server-error-mapper.js";
-import { CustomerIdHeader } from "./server-schemas.js";
+import { CustomerIdHeader, IdempotencyKeyHeader } from "./server-schemas.js";
 
 /**
  * Reads and validates the `X-Customer-Id` header — required on every
@@ -23,6 +23,33 @@ export function requireCustomerId(c: Context): string {
       400,
       "invalid_customer_id",
       "X-Customer-Id header is malformed",
+    );
+  }
+  return result.data;
+}
+
+/**
+ * Reads and validates the optional `Idempotency-Key` header — absent on
+ * every route except `POST /intents` (slice 2). Returns `undefined` when the
+ * header is ABSENT entirely. When PRESENT but malformed (blank,
+ * whitespace-only, or otherwise failing `IdempotencyKeyHeader`), throws
+ * `HttpError(400, "invalid_idempotency_key", ...)` rather than silently
+ * treating it as absent — a blank key must never be treated as "no key
+ * supplied" (this mirrors a documented ADR-0013 footgun in
+ * `@apo/durable-ledger`: a blank key there silently disables dedup). The
+ * value is never echoed in the error message.
+ */
+export function optionalIdempotencyKey(c: Context): string | undefined {
+  const raw = c.req.header("Idempotency-Key");
+  if (raw === undefined) {
+    return undefined;
+  }
+  const result = IdempotencyKeyHeader.safeParse(raw);
+  if (!result.success) {
+    throw new HttpError(
+      400,
+      "invalid_idempotency_key",
+      "Idempotency-Key header is malformed",
     );
   }
   return result.data;

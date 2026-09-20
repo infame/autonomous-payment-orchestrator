@@ -9,8 +9,10 @@ import { SubmitIntent } from "../../app/submit-intent.js";
 import { GetIntent } from "../../app/get-intent.js";
 import { AnswerClarification } from "../../app/answer-clarification.js";
 import { ApproveIntent } from "../../app/approve-intent.js";
+import { AutoApproveIntent } from "../../app/auto-approve-intent.js";
 import { RejectIntent } from "../../app/reject-intent.js";
 import { SyncIntentExecution } from "../../app/sync-intent-execution.js";
+import { deriveIntentId } from "../../app/derive-intent-id.js";
 import { InMemoryIntentRepository } from "../memory/in-memory-intent-repository.js";
 import { FakeAgentCoreClient } from "../memory/fake-agent-core-client.js";
 import { MockLlmClient } from "../llm/mock-llm-client.js";
@@ -92,6 +94,13 @@ function buildApp(
     FIXED_CLOCK,
   );
   const approveIntent = new ApproveIntent(repo, agentCore, TOKEN, FIXED_CLOCK);
+  const autoApproveIntent = new AutoApproveIntent(
+    repo,
+    agentCore,
+    TOKEN,
+    {},
+    FIXED_CLOCK,
+  );
   const rejectIntent = new RejectIntent(repo, FIXED_CLOCK);
   const syncIntentExecution = new SyncIntentExecution(
     repo,
@@ -103,6 +112,7 @@ function buildApp(
     getIntent,
     answerClarification,
     approveIntent,
+    autoApproveIntent,
     rejectIntent,
     syncIntentExecution,
     ...overrides,
@@ -136,6 +146,24 @@ async function get(
 ): Promise<Response> {
   return app.request(path, {
     headers: { "X-Customer-Id": opts.customerId },
+  });
+}
+
+async function postWithKey(
+  app: Hono,
+  path: string,
+  opts: { customerId: string; body?: unknown; idempotencyKey?: string },
+): Promise<Response> {
+  return app.request(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Customer-Id": opts.customerId,
+      ...(opts.idempotencyKey === undefined
+        ? {}
+        : { "Idempotency-Key": opts.idempotencyKey }),
+    },
+    ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
   });
 }
 
@@ -246,12 +274,13 @@ describe("createAgentOrchestratorApp", () => {
       expect(await res.json()).toEqual({ status: "ok" });
     });
 
-    it("touches ZERO of the six deps — every dep is a throwing stub", async () => {
+    it("touches ZERO of the seven deps — every dep is a throwing stub", async () => {
       const { app } = buildApp({
         submitIntent: neverCalled("submitIntent"),
         getIntent: neverCalled("getIntent"),
         answerClarification: neverCalled("answerClarification"),
         approveIntent: neverCalled("approveIntent"),
+        autoApproveIntent: neverCalled("autoApproveIntent"),
         rejectIntent: neverCalled("rejectIntent"),
         syncIntentExecution: neverCalled("syncIntentExecution"),
       });
@@ -418,6 +447,262 @@ describe("createAgentOrchestratorApp", () => {
       expect(body.error.code).toBe("llm_unavailable");
       expect(JSON.stringify(body)).not.toContain("simulated outage");
       expect(createSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /intents with Idempotency-Key", () => {
+    it("THE HEADLINE REGRESSION TEST: two identical POSTs with the same key never trigger two payments", async () => {
+      const { app, agentCore, llm } = buildApp();
+      const reasonSpy = vi.spyOn(llm, "reason");
+      const customerId = "cust_1";
+      const body = { text: ALLOW_TEXT };
+      const idempotencyKey = "idem-headline-1";
+
+      const first = await postWithKey(app, "/intents", {
+        customerId,
+        body,
+        idempotencyKey,
+      });
+      expect(first.status).toBe(201);
+      const firstBody = (await first.json()) as IntentEnvelopeJSON;
+      expect(firstBody.intent.status).toBe("executing");
+      expect(firstBody.intent.durableLedgerEventId).not.toBeNull();
+
+      const second = await postWithKey(app, "/intents", {
+        customerId,
+        body,
+        idempotencyKey,
+      });
+      expect(second.status).toBe(201);
+      const secondBody = (await second.json()) as IntentEnvelopeJSON;
+
+      expect(secondBody.intent.id).toBe(firstBody.intent.id);
+      expect(secondBody.intent.durableLedgerEventId).toBe(
+        firstBody.intent.durableLedgerEventId,
+      );
+      // Real-run count: exactly one payment was ever actually triggered.
+      expect(agentCore.runCount).toBe(1);
+      // Total calls into AgentCoreClient: exactly one — the second POST must
+      // short-circuit via SubmitIntent's replay path (finds the existing
+      // "executing" row, AutoApproveIntent's own executing short-circuit
+      // then fires) and never even ATTEMPT a second startPaymentWorkflow
+      // call, per spec §10's "no second call" requirement.
+      expect(agentCore.calls).toHaveLength(1);
+      // Exactly one LLM call across both requests.
+      expect(reasonSpy).toHaveBeenCalledTimes(1);
+      // Exactly one logical row: both requests resolved to the SAME intent
+      // id (asserted above) — there is no GET /intents list route to count
+      // rows directly, but the repository's create() dedup (verified by
+      // SubmitIntent's own tests) means two rows could never share one id.
+    });
+
+    it("non-vacuity control: two DIFFERENT keys (same customer, same text) yield two distinct intents and two real runs", async () => {
+      const { app, agentCore } = buildApp();
+      const customerId = "cust_1";
+      const body = { text: ALLOW_TEXT };
+
+      const first = await postWithKey(app, "/intents", {
+        customerId,
+        body,
+        idempotencyKey: "idem-control-a",
+      });
+      const second = await postWithKey(app, "/intents", {
+        customerId,
+        body,
+        idempotencyKey: "idem-control-b",
+      });
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      const firstBody = (await first.json()) as IntentEnvelopeJSON;
+      const secondBody = (await second.json()) as IntentEnvelopeJSON;
+
+      expect(secondBody.intent.id).not.toBe(firstBody.intent.id);
+      expect(agentCore.runCount).toBe(2);
+    });
+
+    it("ADR-0014 customer-scoping: same key, DIFFERENT X-Customer-Id -> two distinct intents, two real runs", async () => {
+      const { app, agentCore } = buildApp();
+      const body = { text: ALLOW_TEXT };
+      const idempotencyKey = "idem-shared-across-customers";
+
+      const first = await postWithKey(app, "/intents", {
+        customerId: "cust_a",
+        body,
+        idempotencyKey,
+      });
+      const second = await postWithKey(app, "/intents", {
+        customerId: "cust_b",
+        body,
+        idempotencyKey,
+      });
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      const firstBody = (await first.json()) as IntentEnvelopeJSON;
+      const secondBody = (await second.json()) as IntentEnvelopeJSON;
+
+      expect(secondBody.intent.id).not.toBe(firstBody.intent.id);
+      expect(agentCore.runCount).toBe(2);
+    });
+
+    it("self-healing after a trigger failure: first attempt fails (row stays proposed), retry with the SAME key succeeds, only ONE LLM call total", async () => {
+      const { app, agentCore, llm } = buildApp();
+      const reasonSpy = vi.spyOn(llm, "reason");
+      const customerId = "cust_1";
+      const body = { text: ALLOW_TEXT };
+      const idempotencyKey = "idem-self-heal";
+
+      agentCore.startError = new AgentCoreUnavailableError(
+        "durable-ledger unreachable",
+        {
+          operation: "start_payment_workflow",
+          status: 503,
+          ledgerCode: undefined,
+        },
+      );
+      const failed = await postWithKey(app, "/intents", {
+        customerId,
+        body,
+        idempotencyKey,
+      });
+      expect(failed.status).toBe(503);
+      expect(reasonSpy).toHaveBeenCalledTimes(1);
+
+      // The row persists at "proposed" — SubmitIntent's own write already
+      // succeeded; only AutoApproveIntent's trigger step failed. Verified
+      // via a follow-up GET, addressed by the deterministic derived id
+      // (there is no GET /intents list route).
+      const derivedId = deriveIntentId(customerId, idempotencyKey);
+      const midway = await get(app, `/intents/${derivedId}`, { customerId });
+      expect(midway.status).toBe(200);
+      const midwayBody = (await midway.json()) as IntentEnvelopeJSON;
+      expect(midwayBody.intent.status).toBe("proposed");
+
+      agentCore.startError = undefined;
+      const retried = await postWithKey(app, "/intents", {
+        customerId,
+        body,
+        idempotencyKey,
+      });
+      expect(retried.status).toBe(201);
+      const retriedBody = (await retried.json()) as IntentEnvelopeJSON;
+      expect(retriedBody.intent.id).toBe(derivedId);
+      expect(retriedBody.intent.status).toBe("executing");
+      expect(agentCore.runCount).toBe(1);
+      // SubmitIntent's own pre-check found the existing "proposed" row on
+      // this retry and replayed it (matching text) — no second LLM call.
+      // Only AutoApproveIntent's trigger step needed retrying.
+      expect(reasonSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("no-key regression: POST without Idempotency-Key behaves exactly as before this slice — proposed forever, zero agent-core calls", async () => {
+      const { app, agentCore } = buildApp();
+      const res = await post(app, "/intents", {
+        customerId: "cust_1",
+        body: { text: ALLOW_TEXT },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as IntentEnvelopeJSON;
+      expect(body.intent.status).toBe("proposed");
+      expect(agentCore.calls).toHaveLength(0);
+    });
+
+    it("a body-level idempotencyKey with NO Idempotency-Key header is ignored — identical to no key anywhere: random id, proposed forever, zero agent-core calls, auto-approve never fires", async () => {
+      const { app: appWithBodyKey, agentCore: agentCoreWithBodyKey } =
+        buildApp();
+      const customerId = "cust_1";
+      const idempotencyKey = "sneaky-body-key";
+
+      // No "Idempotency-Key" header — `post` (not `postWithKey`) never sets
+      // one — but the JSON body carries an `idempotencyKey` field, the
+      // second input channel `SubmitIntentBody` must strip.
+      const res = await post(appWithBodyKey, "/intents", {
+        customerId,
+        body: { text: ALLOW_TEXT, idempotencyKey },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as IntentEnvelopeJSON;
+
+      // Auto-approve gate stays closed: the intent parks at "proposed",
+      // exactly as an unkeyed submission always does — NOT "executing".
+      expect(body.intent.status).toBe("proposed");
+      expect(agentCoreWithBodyKey.calls).toHaveLength(0);
+      // The random-id path was taken, not deriveIntentId(customerId,
+      // idempotencyKey) — proving the body value was never read as a key.
+      expect(body.intent.id).not.toBe(
+        deriveIntentId(customerId, idempotencyKey),
+      );
+
+      // Control: byte-identical outcome shape to a request with no key
+      // anywhere (only the random id itself legitimately differs).
+      const { app: controlApp, agentCore: controlAgentCore } = buildApp();
+      const controlRes = await post(controlApp, "/intents", {
+        customerId,
+        body: { text: ALLOW_TEXT },
+      });
+      expect(controlRes.status).toBe(201);
+      const controlBody = (await controlRes.json()) as IntentEnvelopeJSON;
+      expect(controlBody.intent.status).toBe(body.intent.status);
+      expect(controlAgentCore.calls).toHaveLength(0);
+    });
+
+    it("needs_approval verdict with a key present: no auto-approve triggering, zero agent-core calls", async () => {
+      const { app, agentCore } = buildApp();
+      const res = await postWithKey(app, "/intents", {
+        customerId: "cust_1",
+        body: { text: NEEDS_APPROVAL_TEXT },
+        idempotencyKey: "idem-needs-approval",
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as IntentEnvelopeJSON;
+      expect(body.intent.status).toBe("needs_approval");
+      expect(agentCore.calls).toHaveLength(0);
+    });
+
+    it.each([
+      ["empty", ""],
+      ["whitespace-only", "   "],
+    ])(
+      "header validation: %s Idempotency-Key -> 400 invalid_idempotency_key, neither use-case invoked",
+      async (_label, headerValue) => {
+        const { app } = buildApp({
+          submitIntent: neverCalled("submitIntent"),
+          autoApproveIntent: neverCalled("autoApproveIntent"),
+        });
+        const res = await postWithKey(app, "/intents", {
+          customerId: "cust_1",
+          body: { text: ALLOW_TEXT },
+          idempotencyKey: headerValue,
+        });
+        expect(res.status).toBe(400);
+        const errBody = (await res.json()) as ErrorEnvelopeJSON;
+        expect(errBody.error.code).toBe("invalid_idempotency_key");
+      },
+    );
+
+    it("same key + different text: 409 idempotency_conflict, body contains NEITHER the original nor the new text", async () => {
+      const { app } = buildApp();
+      const idempotencyKey = "idem-conflict";
+      const originalText = "Pay the vendor $50.00 for the invoice.";
+      const differentText = "Pay the vendor $51.00 for a different invoice.";
+
+      const first = await postWithKey(app, "/intents", {
+        customerId: "cust_1",
+        body: { text: originalText },
+        idempotencyKey,
+      });
+      expect(first.status).toBe(201);
+
+      const second = await postWithKey(app, "/intents", {
+        customerId: "cust_1",
+        body: { text: differentText },
+        idempotencyKey,
+      });
+      expect(second.status).toBe(409);
+      const secondBody = (await second.json()) as ErrorEnvelopeJSON;
+      expect(secondBody.error.code).toBe("idempotency_conflict");
+      const serialized = JSON.stringify(secondBody);
+      expect(serialized).not.toContain(originalText);
+      expect(serialized).not.toContain(differentText);
     });
   });
 

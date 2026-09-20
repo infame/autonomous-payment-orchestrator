@@ -18,6 +18,7 @@ import { SubmitIntent } from "./app/submit-intent.js";
 import { GetIntent } from "./app/get-intent.js";
 import { AnswerClarification } from "./app/answer-clarification.js";
 import { ApproveIntent } from "./app/approve-intent.js";
+import { AutoApproveIntent } from "./app/auto-approve-intent.js";
 import { RejectIntent } from "./app/reject-intent.js";
 import { SyncIntentExecution } from "./app/sync-intent-execution.js";
 import { createAgentOrchestratorApp } from "./adapters/http/app.js";
@@ -100,7 +101,7 @@ export interface AgentOrchestrator {
 
 /**
  * Shared wiring for both factories below: given already-built ports plus a
- * resolved `PolicyConfig`, builds the six `app/*` use-cases and the Hono
+ * resolved `PolicyConfig`, builds the seven `app/*` use-cases and the Hono
  * `app`. Kept as one module-private helper so `createAgentOrchestrator` and
  * `createInMemoryAgentOrchestrator` cannot silently drift apart on use-case
  * construction order/arity.
@@ -127,6 +128,13 @@ function buildApp(
     paymentMethodToken,
     clock,
   );
+  const autoApproveIntent = new AutoApproveIntent(
+    intents,
+    agentCore,
+    paymentMethodToken,
+    policy,
+    clock,
+  );
   const rejectIntent = new RejectIntent(intents, clock);
   const syncIntentExecution = new SyncIntentExecution(
     intents,
@@ -139,6 +147,7 @@ function buildApp(
     getIntent,
     answerClarification,
     approveIntent,
+    autoApproveIntent,
     rejectIntent,
     syncIntentExecution,
   });

@@ -1,16 +1,27 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { ZodError } from "zod";
-import { SubmitIntent, SubmitIntentCommand } from "./submit-intent.js";
+import {
+  IdempotencyConflictError,
+  IntentDerivationCollisionError,
+  SubmitIntent,
+  SubmitIntentCommand,
+} from "./submit-intent.js";
+import { deriveIntentId } from "./derive-intent-id.js";
 import { GetIntent } from "./get-intent.js";
 import { InMemoryIntentRepository } from "../adapters/memory/in-memory-intent-repository.js";
 import { MockLlmClient } from "../adapters/llm/mock-llm-client.js";
+import type { LlmClient, LlmReasoningRequest } from "../ports/llm-client.js";
 import { LlmUnavailableError } from "../ports/llm-client.js";
-import type {
-  IntentRepository,
-  StoredIntent,
+import {
+  IntentAlreadyExistsError,
+  type IntentRepository,
+  type StoredIntent,
 } from "../ports/intent-repository.js";
 import { Intent } from "../domain/intent.js";
-import { paymentProposal } from "../domain/agent-proposal.js";
+import {
+  paymentProposal,
+  type AgentProposal,
+} from "../domain/agent-proposal.js";
 import type { AllowVerdict } from "../policy/verdict.js";
 
 const CLOCK = () => new Date("2026-07-01T00:00:00Z");
@@ -23,6 +34,58 @@ class NoUpdateRepository extends InMemoryIntentRepository {
     _expectedVersion: number,
   ): Promise<StoredIntent> {
     throw new Error("update() must not be called by SubmitIntent");
+  }
+}
+
+/** Counts calls to `reason()` and `create()` — used to prove a replay makes neither. Mirrors `answer-clarification.test.ts`'s `CountingLlmClient`. */
+class CountingLlmClient implements LlmClient {
+  readonly name: string;
+  calls = 0;
+  constructor(private readonly inner: LlmClient) {
+    this.name = inner.name;
+  }
+  async reason(input: LlmReasoningRequest): Promise<AgentProposal> {
+    this.calls += 1;
+    return this.inner.reason(input);
+  }
+}
+
+/** Counts calls to `create()` — used to prove a replay writes nothing. */
+class CreateCountingRepository extends InMemoryIntentRepository {
+  createCalls = 0;
+  override async create(intent: Intent): Promise<StoredIntent> {
+    this.createCalls += 1;
+    return super.create(intent);
+  }
+}
+
+/** A repository whose `create()` always throws `IntentAlreadyExistsError`, regardless of id — used to force a `randomUUID()` collision on the unkeyed path. */
+class AlwaysExistsRepository extends InMemoryIntentRepository {
+  override async create(intent: Intent): Promise<StoredIntent> {
+    throw new IntentAlreadyExistsError(intent.id);
+  }
+}
+
+/**
+ * A repository that performs one competing out-of-band `create()`, via
+ * `race`, the first time `create()` is called — BEFORE delegating to the
+ * real (in-memory) `create()`. Used to deterministically construct a
+ * same-key concurrent-create race without racing two `execute()` calls with
+ * `Promise.allSettled`. Mirrors `reject-intent.test.ts`'s
+ * `RaceOnUpdateIntentRepository`, applied to `create()` instead of
+ * `update()`.
+ */
+class RaceOnCreateIntentRepository extends InMemoryIntentRepository {
+  private hasRaced = false;
+  /** Set after construction (it typically needs to close over this same instance). */
+  race: (() => Promise<void>) | null = null;
+
+  override async create(intent: Intent): Promise<StoredIntent> {
+    if (!this.hasRaced && this.race) {
+      this.hasRaced = true;
+      await this.race();
+    }
+    return super.create(intent);
   }
 }
 
@@ -317,5 +380,166 @@ describe("SubmitIntent", () => {
     expect(() =>
       SubmitIntentCommand.parse({ text: "Pay $1.00", customerId: "cust_1" }),
     ).not.toThrow();
+  });
+
+  describe("idempotent submission (Idempotency-Key)", () => {
+    const customerId = "cust_1";
+    const idempotencyKey = "retry-key-1";
+    const text = "Pay the vendor $50.00 for the invoice.";
+
+    it("Intent.id is the deterministic derived value, not the random newId()", async () => {
+      const result = await useCase.execute({
+        text,
+        customerId,
+        idempotencyKey,
+      });
+
+      expect(result.intent.id).toBe(deriveIntentId(customerId, idempotencyKey));
+      // newId() (the random-id source) was never consumed for this call.
+      expect(seq).toBe(0);
+    });
+
+    it("a replay makes zero LLM calls and zero repository writes", async () => {
+      const countingLlm = new CountingLlmClient(llm);
+      const countingRepo = new CreateCountingRepository();
+      const idempotent = new SubmitIntent(
+        countingRepo,
+        countingLlm,
+        {},
+        CLOCK,
+        () => `intent_${++seq}`,
+      );
+
+      const first = await idempotent.execute({
+        text,
+        customerId,
+        idempotencyKey,
+      });
+      expect(first.replayed).toBe(false);
+      expect(countingLlm.calls).toBe(1);
+      expect(countingRepo.createCalls).toBe(1);
+
+      const second = await idempotent.execute({
+        text,
+        customerId,
+        idempotencyKey,
+      });
+      expect(second.replayed).toBe(true);
+      expect(second.intent.id).toBe(first.intent.id);
+      expect(second.intent.updatedAt).toEqual(first.intent.updatedAt);
+      // No new LLM call and no new write happened on the replay.
+      expect(countingLlm.calls).toBe(1);
+      expect(countingRepo.createCalls).toBe(1);
+    });
+
+    it("same key + different text throws IdempotencyConflictError, and the stored intent is unchanged", async () => {
+      const first = await useCase.execute({ text, customerId, idempotencyKey });
+      expect(first.intent.status).toBe("proposed");
+
+      await expect(
+        useCase.execute({
+          text: "Pay the vendor $999.00 for a totally different invoice.",
+          customerId,
+          idempotencyKey,
+        }),
+      ).rejects.toBeInstanceOf(IdempotencyConflictError);
+
+      const get = new GetIntent(repo);
+      const reread = await get.execute(first.intent.id);
+      expect(reread.status).toBe(first.intent.status);
+      expect(reread.proposal).toEqual(first.intent.proposal);
+      expect(reread.updatedAt).toEqual(first.intent.updatedAt);
+    });
+
+    it("a row at the derived id belonging to a DIFFERENT customerId throws IntentDerivationCollisionError, not a silent replay (forces the collision guard, since deriveIntentId itself can't be made to collide)", async () => {
+      const id = deriveIntentId(customerId, idempotencyKey);
+      // Seed a row directly at the derived id, under a different customerId
+      // — the only way to exercise this guard in a test, since deriveIntentId
+      // itself can't be made to actually collide.
+      await repo.create(
+        Intent.submit({
+          id,
+          customerId: "cust_other",
+          text,
+          now: CLOCK(),
+        }),
+      );
+
+      await expect(
+        useCase.execute({ text, customerId, idempotencyKey }),
+      ).rejects.toSatisfy((err: unknown) => {
+        expect(err).toBeInstanceOf(IntentDerivationCollisionError);
+        expect((err as IntentDerivationCollisionError).id).toBe(id);
+        return true;
+      });
+    });
+
+    it("no key supplied: unchanged behavior — random id, replayed always false", async () => {
+      const result = await useCase.execute({ text, customerId });
+
+      expect(result.replayed).toBe(false);
+      // Came from the injected newId() (the random-id source), not any
+      // deterministic formula — proven by matching the fixture's counter.
+      expect(result.intent.id).toBe(`intent_${seq}`);
+    });
+
+    it("IntentAlreadyExistsError still propagates on the unkeyed path on a forced id collision", async () => {
+      const collidingRepo = new AlwaysExistsRepository();
+      const colliding = new SubmitIntent(
+        collidingRepo,
+        llm,
+        {},
+        CLOCK,
+        () => `intent_${++seq}`,
+      );
+
+      await expect(
+        colliding.execute({ text, customerId }),
+      ).rejects.toBeInstanceOf(IntentAlreadyExistsError);
+    });
+
+    it("concurrent same-key create race: the losing call replays the winner's row instead of throwing", async () => {
+      const racyRepo = new RaceOnCreateIntentRepository();
+      const winnerLlm = new MockLlmClient();
+      const winnerUseCase = new SubmitIntent(
+        racyRepo,
+        winnerLlm,
+        {},
+        CLOCK,
+        () => `winner_${++seq}`,
+      );
+      const id = deriveIntentId(customerId, idempotencyKey);
+
+      racyRepo.race = async () => {
+        // Simulates a concurrent second request with the same
+        // (customerId, idempotencyKey) winning the race to create() first.
+        const winnerResult = await winnerUseCase.execute({
+          text,
+          customerId,
+          idempotencyKey,
+        });
+        expect(winnerResult.intent.id).toBe(id);
+        expect(winnerResult.replayed).toBe(false);
+      };
+
+      const losingUseCase = new SubmitIntent(
+        racyRepo,
+        llm,
+        {},
+        CLOCK,
+        () => `loser_${++seq}`,
+      );
+      const losingResult = await losingUseCase.execute({
+        text,
+        customerId,
+        idempotencyKey,
+      });
+
+      expect(losingResult.replayed).toBe(true);
+      expect(losingResult.intent.id).toBe(id);
+
+      const stored = await racyRepo.findById(id);
+      expect(stored?.intent.text).toBe(text);
+    });
   });
 });

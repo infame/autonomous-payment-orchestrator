@@ -96,3 +96,59 @@ add/remove: `grep -rn "all (four|five|six) services|starts all" packages/*/READM
 Also: `packages/durable-ledger/README.md` fails `prettier --check` on `main`
 already (`*emphasis*` vs `_emphasis_` throughout) — do not charge that to a
 doc branch that only edits a couple of lines; see [[repo-lint-not-wired]].
+
+**Use-case counts are a fourth counting site (2026-09-19,
+`feat/agent-orchestrator-auto-approve`):** adding a 7th `app/*` use-case made
+`packages/agent-orchestrator/README.md` carry the number **five** times, and
+the branch updated only three of them. Standing grep before approving any
+`src/app/*.ts` addition:
+`grep -nE "all (five|six|seven) use-cases|None of the (five|six|seven) use-cases|(five|six|seven) deps" packages/agent-orchestrator/README.md`.
+The sites are: `## Status` numbered item 8 ("wires all six use-cases behind
+real routes" — ~line 63), the ADR-0014 scoping paragraph ("None of the six
+use-cases above scope by caller/customer" — ~line 255), the `## HTTP
+interface` intro, the `/healthz` "touches none of the N deps" line, and
+`app.test.ts`'s matching test title. The scoping paragraph is the one that
+actually matters: it is a *safety* claim ("every id-addressed route compares
+`X-Customer-Id` against the stored `Intent.customerId` before calling any of
+these use-cases"), and a use-case whose call site deliberately skips that
+check must be named there, not only in a separate paragraph lower down.
+
+**Renaming a README section breaks ADR cross-references (same branch):** ADRs
+in `docs/adr/` cite README sections *by title* ("see the README's 'Known
+limitation' on `Intent.autoApprove` having no production caller",
+`0014-customer-scoping-without-authentication.md:116`). Slice 3 replaced that
+exact README heading and left the ADR pointing at nothing. **When a docs slice
+removes or renames a bold/`##` section title, grep `docs/` and every
+`packages/*/README.md` for the old title string before approving.** Related:
+an ADR Consequences bullet written as a forward-looking MUST ("if a future
+change wires auto-approve into `SubmitIntent`, that same change MUST add a
+client-supplied `Idempotency-Key`") is discharged the moment that change
+lands — the house-correct fix is a dated one-line `**Update (YYYY-MM-DD):**
+satisfied by ADR-00NN` under the bullet, not a supersession (the ADR itself is
+still in force) and not a separate follow-up branch (the same docs slice
+created the staleness).
+
+**The `mapError` table is a FIFTH enumeration site (2026-09-19,
+`feat/agent-orchestrator-auto-approve` fix commit):** `agent-orchestrator`'s
+README carries a full row-per-error-class table restating
+`adapters/http/server-error-mapper.ts` (`## Error mapping`, ~line 349),
+plus a prose paragraph right under it naming which rows are "currently
+unreachable in practice" (~line 390). A commit that adds a new error class
+*and* an explicit mapper case (here `IntentDerivationCollisionError`, folded
+into the `InvalidProposalError, IntentAlreadyExistsError | 500 |
+internal_error` row's class list) updated the mapper's own JSDoc from "two
+subclasses" to "three" but left both README sites at two. Standing check
+when a diff touches `server-error-mapper.ts`:
+`grep -n "InvalidProposalError\|internal_error" packages/*/README.md` and
+confirm every class named in a `mapError` `instanceof` branch appears in the
+table. Same rule applies to the "unreachable in practice" prose — a new
+should-be-unreachable class belongs there too.
+
+**Quoting a README section in an ADR: match character-for-character (2026-09-19,
+`feat/agent-orchestrator-auto-approve` doc-polish commit):** `agent-orchestrator`'s
+README "sections" are often bold paragraphs, not `##` headings, and several end
+with a trailing period inside the bold (`**Auto-approve: a policy \`allow\`
+verdict's route out of \`proposed\`.**`, README:532). An ADR `**Update:**` note
+that quotes the title without that period is a grep miss for the next person.
+When reviewing an ADR↔README cross-reference, do not eyeball it: `grep -n` the
+quoted string in the README and confirm it hits.

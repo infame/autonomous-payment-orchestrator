@@ -136,6 +136,28 @@ describe("createInMemoryAgentOrchestrator", () => {
     });
     expect(policy.maxAutoApproveAmount).toBe(1);
   });
+
+  it("wires AutoApproveIntent into buildApp: a keyed, allow-verdict POST /intents reaches executing end-to-end", async () => {
+    const agentCore = new FakeAgentCoreClient();
+    const { app } = createInMemoryAgentOrchestrator({
+      agentCore,
+      paymentMethodToken: TOKEN,
+    });
+
+    const res = await app.request("/intents", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Customer-Id": "cust_1",
+        "Idempotency-Key": "idem-wiring-check",
+      },
+      body: JSON.stringify({ text: ALLOW_TEXT }),
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as SubmitResponseJSON;
+    expect(body.intent.status).toBe("executing");
+    expect(agentCore.runCount).toBe(1);
+  });
 });
 
 describe("createLlmClient", () => {

@@ -60,7 +60,7 @@ boot the service:
    original five — `SyncIntentExecution` (below), the `executing → terminal`
    reconciliation use-case `GET /intents/:id` now calls. `config.ts`
    (env-var parsing) is done, the Hono HTTP layer (`adapters/http/`, see
-   "HTTP interface" below) wires all six use-cases behind real routes, and
+   "HTTP interface" below) wires all seven use-cases behind real routes, and
    the composition root (`composition-root.ts`) + `main.ts` (see "Running
    the service" below) construct real adapters and boot the service. Step 8
    is done.
@@ -252,40 +252,66 @@ on every poll — the opposite tradeoff from `ApproveIntent`, where the
 failing call was the one that was supposed to move money. It is the
 use-case `GET /intents/:id` calls (see "HTTP interface" below).
 
-**None of the six use-cases above scope by caller/customer THEMSELVES** —
-each still takes a bare `intentId` (or, for `SubmitIntent`, a caller-supplied
-`customerId` that nothing inside the use-case cross-checks against anything).
-For `GetIntent` and `SyncIntentExecution` that's a read-only gap; for
-`AnswerClarification`, `RejectIntent`, and — most importantly —
-`ApproveIntent`, it would mean anyone holding an intent id could steer,
-terminate, or trigger real money movement on someone else's pending payment
-— if these use-cases were ever called directly, bypassing the HTTP layer.
-That gap is now closed one level up, at the HTTP boundary: every
+**Six of the seven use-cases above don't scope by caller/customer
+THEMSELVES** — each still takes a bare `intentId` (or, for `SubmitIntent`, a
+caller-supplied `customerId` that nothing inside the use-case cross-checks
+against anything). For `GetIntent` and `SyncIntentExecution` that's a
+read-only gap; for `AnswerClarification`, `RejectIntent`, and — most
+importantly — `ApproveIntent`, it would mean anyone holding an intent id
+could steer, terminate, or trigger real money movement on someone else's
+pending payment — if these use-cases were ever called directly, bypassing
+the HTTP layer. That gap is closed one level up, at the HTTP boundary: every
 id-addressed route in "HTTP interface" below compares `X-Customer-Id`
-against the stored `Intent.customerId` before calling any of these
+against the stored `Intent.customerId` before calling any of these SIX
 use-cases, per [ADR-0014](../../docs/adr/0014-customer-scoping-without-authentication.md).
-The use-cases themselves remain individually unsafe on their own — ADR-0014
+Those six use-cases remain individually unsafe on their own — ADR-0014
 states this as a binding constraint on any FUTURE driving adapter for this
 package, not just a description of this one.
+
+**`AutoApproveIntent` is the seventh, and the one deliberate exception**: it
+does NOT go through that same HTTP-layer ownership comparison. Instead,
+`AutoApproveIntentCommand` itself carries `customerId`, and `execute()`
+compares it against the stored `Intent.customerId` directly (same
+404-not-403 shape as ADR-0014) — see "HTTP interface" below (the
+`AutoApproveIntent` paragraph) for why that check is defense in depth rather
+than load-bearing at its one call site, and
+[ADR-0015](../../docs/adr/0015-deterministic-intent-ids-for-auto-approve.md)
+for the full derivation-scoping argument underneath it.
 
 ## HTTP interface
 
 `adapters/http/app.ts`'s `createAgentOrchestratorApp(deps)` builds a Hono
-`app` wired against the six use-cases above. It takes its deps as a plain
-parameter object (`AgentOrchestratorAppDeps`, each use-case narrowed to
-`Pick<X, "execute">`) and constructs nothing itself — no real
-`IntentRepository`, `LlmClient`, or `AgentCoreClient` adapter is ever
-constructed inside `adapters/http/`. Building and injecting real adapters is
-`composition-root.ts`'s job — see "Running the service" below.
+`app` wired against the seven use-cases above (`AgentOrchestratorAppDeps`
+now carries seven; `autoApproveIntent` has no route of its own — see below).
+It takes its deps as a plain parameter object (`AgentOrchestratorAppDeps`,
+each use-case narrowed to `Pick<X, "execute">`) and constructs nothing
+itself — no real `IntentRepository`, `LlmClient`, or `AgentCoreClient`
+adapter is ever constructed inside `adapters/http/`. Building and injecting
+real adapters is `composition-root.ts`'s job — see "Running the service"
+below.
 
 | Route | Use-case | Success | Notes |
 | --- | --- | --- | --- |
-| `POST /intents` | `SubmitIntent` | `201 { intent, verdict }` | `customerId` comes from `X-Customer-Id`, never the body |
+| `POST /intents` | `SubmitIntent`, then — only with a valid `Idempotency-Key` header AND a resulting `proposed` status — `AutoApproveIntent` | `201 { intent, verdict }` | `customerId` comes from `X-Customer-Id`, never the body. Optional `Idempotency-Key` header (ADR-0015): derives a deterministic `Intent.id`, enables retry-safe replay, and is the sole trigger for auto-approve. Likewise comes from the header only — a body-level `idempotencyKey` field is stripped and ignored. Status stays `201` even on a replay or an auto-approve chain — never a separate status code |
 | `POST /intents/:id/clarify` | `AnswerClarification` | `200 { intent, verdict }` | |
 | `POST /intents/:id/approve` | `ApproveIntent` | `200 { intent }` | no `verdict` key at all |
 | `POST /intents/:id/reject` | `RejectIntent` | `200 { intent }` | no `verdict` key at all |
 | `GET /intents/:id` | `SyncIntentExecution` (falls back to `GetIntent` on a version conflict) | `200 { intent }` | no `verdict` key at all |
 | `GET /healthz` | none | `200 { status: "ok" }` | liveness only, see below |
+
+`AutoApproveIntent` is deliberately not addressable as its own route: it is
+called from exactly one place, `POST /intents`, immediately after a keyed
+`SubmitIntent` call lands on `proposed`. Unlike the four id-addressed routes
+above, `app.ts` itself performs no separate ownership pre-check before this
+call — `AutoApproveIntent.execute()` takes `customerId` on its own command
+and performs that comparison itself (throwing the same `IntentNotFoundError`
+a mismatch anywhere else would throw), as defense in depth rather than
+because the call site needs it: the `intentId` passed in here is always
+already scoped to the SAME caller's own `customerId`, either freshly minted
+for this request or derived via `deriveIntentId(customerId, idempotencyKey)`
+from it — see `AgentOrchestratorAppDeps`'s own doc comment in `app.ts` and
+[ADR-0015](../../docs/adr/0015-deterministic-intent-ids-for-auto-approve.md)
+for the full derivation-scoping argument.
 
 The `{ intent, verdict }` vs. `intent.policyVerdict` distinction from
 `SubmitIntent`/`AnswerClarification`'s own headers carries through
@@ -325,11 +351,12 @@ every thrown error becomes a status + JSON envelope
 | `ZodError` | 400 | `validation_failed` |
 | `HttpError` (bad header/JSON, this file's own throws) | its own | its own |
 | `ExecutionRaceLostError` | 409 | `execution_race_lost` (+ `durableLedgerEventId`) |
+| `IdempotencyConflictError` | 409 | `idempotency_conflict` |
 | `IntentNotFoundError` | 404 | `intent_not_found` |
 | `InvalidIntentStateError` | 422 | `invalid_intent_state` |
 | `InvalidIntentError` | 400 | `invalid_intent` |
 | `IntentVersionConflictError` | 409 | `intent_version_conflict` |
-| `InvalidProposalError`, `IntentAlreadyExistsError` | 500 | `internal_error` (server faults, never a caller-fixable 4xx) |
+| `InvalidProposalError`, `IntentAlreadyExistsError`, `IntentDerivationCollisionError` | 500 | `internal_error` (server faults, never a caller-fixable 4xx) |
 | `LlmUnavailableError` | 503 | `llm_unavailable` |
 | `LlmConfigurationError` | 500 | `llm_configuration_error` |
 | `LlmProtocolError` | 502 | `llm_protocol_error` |
@@ -343,7 +370,13 @@ every thrown error becomes a status + JSON envelope
 
 A policy `reject` is explicitly **not** an error — `POST /intents` on a
 hard-rejected proposal is a `201` with `intent.status === "rejected"`, not a
-4xx; see "HTTP interface" above. Every `LlmClientError`/`AgentCoreClientError`
+4xx; see "HTTP interface" above. `idempotency_conflict` (409) fires when a
+retried `POST /intents` reuses an `Idempotency-Key` with different `text`
+than the original call — see [ADR-0015](../../docs/adr/0015-deterministic-intent-ids-for-auto-approve.md).
+A *malformed* `Idempotency-Key` (blank, whitespace-only, or otherwise
+failing shape validation) is instead a `400 invalid_idempotency_key`,
+through the generic `HttpError` row above — never silently treated as "no
+key supplied". Every `LlmClientError`/`AgentCoreClientError`
 row uses a FIXED message, never `err.message`/`err.reason` — both ports'
 own headers already forbid building an error message from vendor/response
 detail, and this mapper is the last line of defense against that leaking
@@ -354,10 +387,13 @@ durable-ledger run (no `workflow_runs` correlation table exists to
 re-derive it, per ADR-0010/0013). Several rows are currently unreachable in
 practice — `AgentCoreBadRequestError`/`AgentCoreRunNotFoundError`/
 `AgentCoreRequestCanceledError` can only originate from this client's own
-bug or an explicit caller cancellation, and `InvalidProposalError`/
+bug or an explicit caller cancellation, `InvalidProposalError`/
 `IntentAlreadyExistsError` require `LlmClient`/`IntentRepository` to violate
-their own documented contracts — they're mapped anyway so the mapper fails
-closed rather than falling through to a misleading default.
+their own documented contracts, and `IntentDerivationCollisionError` (see
+[ADR-0015](../../docs/adr/0015-deterministic-intent-ids-for-auto-approve.md))
+needs an actual SHA-1 collision on the derived intent id — they're mapped
+anyway so the mapper fails closed rather than falling through to a
+misleading default.
 
 ### Why `/healthz` is liveness-only
 
@@ -366,7 +402,7 @@ every load-balancer probe interval would be wasteful at best (extra vendor
 calls/DB round-trips on a timer that has nothing to do with real traffic)
 and dangerous at worst (a probe interval tighter than a real outage's
 recovery time could flap the process in and out of rotation). `GET /healthz`
-touches none of the six deps — see `app.test.ts`'s own test proving this by
+touches none of the seven deps — see `app.test.ts`'s own test proving this by
 building an app whose every dep is a throwing stub and confirming `/healthz`
 still returns `200`.
 
@@ -383,9 +419,11 @@ still returns `200`.
 - `X-Customer-Id` is an addition spec §7 doesn't mention at all — see
   ADR-0014 for why it exists.
 
-The existing "Known limitation" on `Intent.autoApprove` having no production
-caller (below) is unchanged by this HTTP layer — see that section, not
-restated here.
+`POST /intents`'s optional `Idempotency-Key` header and its `AutoApproveIntent`
+chaining are new additions spec §7 doesn't mention either — see "The domain
+model" below (the section that used to describe `Intent.autoApprove` having
+no production caller) and [ADR-0015](../../docs/adr/0015-deterministic-intent-ids-for-auto-approve.md)
+for the full mechanism, not restated here.
 
 ## `AgentCoreClient` and `HttpDurableLedgerClient`
 
@@ -491,23 +529,40 @@ separately, once `AnswerClarification` has re-asked the `LlmClient`. See
 the method's own doc comment in `src/domain/intent.ts` for the full set-once
 reasoning.
 
-**Known limitation: a policy `allow` verdict currently has no route out of
-`proposed`.** `Intent.autoApprove` (the domain's own `proposed → executing`
-transition, for exactly this case) has no *production* caller — only
-tests construct it directly as a seeding/transition helper — `SubmitIntent`/`AnswerClarification` deliberately don't persist
-an `allow` verdict (see `apply-policy.ts`'s header: it would be stale by
-claim/execute time regardless), and nothing else ever re-evaluates policy
-on a `proposed` intent to *act* on a fresh `allow`. So an intent whose
-first policy pass was `allow` sits at `proposed` forever today; only
-`needs_approval → executing` (via `ApproveIntent`) is reachable. This is
-deliberately NOT being fixed as part of step 8: closing it properly means
-giving `POST /intents` a client-supplied `Idempotency-Key` first — the
-key `ApproveIntent` uses (`Intent.id`) is minted *inside* `SubmitIntent`,
-so ADR-0013's dedup gives zero protection against a retried `POST /intents`
-turning into a second real payment once auto-approve can trigger one on
-the very first call. That's a schema-touching design conversation (a
-uniqueness constraint on the intent row, most likely), not step-8
-plumbing — revisit it as its own slice once step 8 ships.
+**Auto-approve: a policy `allow` verdict's route out of `proposed`.**
+`Intent.autoApprove` (the domain's own `proposed → executing` transition,
+for exactly this case) now has a production caller: `AutoApproveIntent`
+(`src/app/auto-approve-intent.ts`), triggered from inside the `POST
+/intents` handler immediately after a `SubmitIntent` call, but **only** when
+the caller supplied an `Idempotency-Key` header AND the resulting intent
+landed on `proposed` (which, per `SubmitIntent`'s own invariant, uniquely
+means the fresh policy pass just returned `allow`). When present, that key
+makes `SubmitIntent` derive `Intent.id` *deterministically* —
+`deriveIntentId(customerId, idempotencyKey)`, a UUIDv5 over
+`${customerId}:${idempotencyKey}` (`app/derive-intent-id.ts`) — instead of
+generating a random one, which is what makes it safe to chain a real
+durable-ledger trigger onto the very first `POST /intents` call: a retried
+submission re-derives the *same* `Intent.id`, which both naturally dedups
+against `SubmitIntent`'s own `IntentAlreadyExistsError` path and, because
+`AutoApproveIntent` supplies that same id as durable-ledger's
+`Idempotency-Key` (ADR-0013), reuses the same trigger-level dedup key too —
+never a second real payment for the same retried request. See
+[ADR-0015](../../docs/adr/0015-deterministic-intent-ids-for-auto-approve.md)
+for the full design (why a deterministic id and not a separate key column,
+why the header is optional, why a same-key/different-text retry is a `409
+idempotency_conflict` instead of a silent replay, and the inherited
+ADR-0013 "dud handle" residual risk).
+
+**The permanent caveat, stated as bluntly as the limitation used to be
+stated: a `POST /intents` call WITHOUT an `Idempotency-Key` header still
+cannot auto-approve.** A policy-`allow` intent submitted without a key
+still parks at `proposed` forever, exactly as before this feature — this is
+not a gap left over to close in some future slice, it is the mechanism's
+load-bearing safety property. There is no dedup key to hand durable-ledger
+without one, and no safe way to retry a real-money trigger without a dedup
+key. A client must explicitly opt in by supplying `Idempotency-Key` for
+auto-approve to ever fire; `needs_approval → executing` via `ApproveIntent`
+remains the only route to `executing` for everything else.
 
 ## Why the policy layer is separate — from both the LLM and the use-cases
 
@@ -873,7 +928,7 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
 - [x] `config.ts` (step 8, second slice)
 - [x] Hono HTTP layer (step 8, third slice)
 - [x] Composition root + `main.ts` (step 8, fourth and final slice)
-- [ ] Auto-approve path: client-supplied `Idempotency-Key` on `POST /intents` + an `Intent.autoApprove` caller (deferred past step 8, see "Known limitation" above)
+- [x] Auto-approve path: client-supplied `Idempotency-Key` on `POST /intents` + an `Intent.autoApprove` caller (deterministic `Intent.id` via [ADR-0015](../../docs/adr/0015-deterministic-intent-ids-for-auto-approve.md); `AutoApproveIntent` triggers durable-ledger on a fresh `allow`, exactly once)
 - [ ] End-to-end demo scenario
 - [x] Step 9: `Dockerfile` + `docker-compose` wiring + CI — the package's
       own `Dockerfile`, a fifth `docker-compose.yml` service wired behind
