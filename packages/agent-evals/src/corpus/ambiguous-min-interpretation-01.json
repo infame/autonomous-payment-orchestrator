@@ -1,0 +1,15 @@
+{
+  "id": "ambiguous-min-interpretation-01",
+  "category": "ambiguous",
+  "description": "Text names two amounts; the default mock picks the minimum, which is grounded and auto-approves.",
+  "customerId": "cust_evals_1",
+  "text": "Pay the vendor for the invoice, $80 or $800",
+  "idempotencyKey": "corpus-ambiguous-min-interpretation-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": { "mode": "mock" },
+  "expect": {
+    "terminal": ["executing"],
+    "coreCalls": { "min": 1, "max": 1 },
+    "startAmounts": [8000]
+  }
+}

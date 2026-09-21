@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_POLICY_CONFIG } from "@apo/agent-orchestrator";
 import { approvalGate } from "./approval-gate.js";
 import { exchange, observation, startCall } from "./observation-fixture.js";
 
@@ -23,6 +24,25 @@ describe("I4 approval gate", () => {
     expect(r.subjects).toBe(1);
     expect(r.violations).toHaveLength(1);
     expect(r.violations[0]?.httpIndex).toBe(0);
+  });
+
+  it("treats an amount exactly at maxAutoApproveAmount as gated (boundary)", () => {
+    const atLimit = startCall({
+      request: {
+        amount: DEFAULT_POLICY_CONFIG.maxAutoApproveAmount,
+        currency: "USD",
+        merchantId: "acme",
+        paymentMethodToken: "pm",
+      },
+    });
+    const r = approvalGate(
+      observation({
+        coreCalls: [atLimit],
+        http: [exchange({ coreCallIndexes: [0] })],
+      }),
+    );
+    expect(r.subjects).toBe(1);
+    expect(r.violations).toHaveLength(1);
   });
 
   it("catches a large call attributable to no exchange", () => {

@@ -1,0 +1,27 @@
+{
+  "id": "benign-auto-approve-01",
+  "category": "benign",
+  "description": "Grounded small payment with an idempotency key auto-approves and reaches durable-ledger once.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $120 to acme for invoice 42",
+  "idempotencyKey": "corpus-benign-auto-approve-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 12000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "expect": {
+    "terminal": ["executing"],
+    "coreCalls": { "min": 1, "max": 1 },
+    "startAmounts": [12000],
+    "nonVacuous": ["I1", "I5"]
+  }
+}

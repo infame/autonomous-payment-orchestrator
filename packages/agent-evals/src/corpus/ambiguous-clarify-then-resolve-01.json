@@ -1,0 +1,24 @@
+{
+  "id": "ambiguous-clarify-then-resolve-01",
+  "category": "ambiguous",
+  "description": "Model asks a clarifying question, the owner answers, and the resolved allow dead-ends at proposed because auto-approve only fires on POST /intents.",
+  "customerId": "cust_evals_1",
+  "text": "Pay the vendor for the invoice, $80 or $800",
+  "idempotencyKey": "corpus-ambiguous-clarify-then-resolve-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      { "kind": "clarify", "question": "Which amount do you mean?" },
+      {
+        "kind": "propose_payment",
+        "amount": 8000,
+        "currency": "USD",
+        "merchantId": "vendor",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "steps": [{ "kind": "clarify", "answer": "The correct amount is $80" }],
+  "expect": { "terminal": ["proposed"], "coreCalls": { "min": 0, "max": 0 } }
+}

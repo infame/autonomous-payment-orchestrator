@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { clarifyProposal, paymentProposal } from "@apo/agent-orchestrator";
 import { RecordingAgentCoreClient } from "./core/recording-agent-core-client.js";
 import { ScriptedLlmClient } from "./llm/scripted-llm-client.js";
-import { runScenario } from "./runner.js";
+import { runScenario, ScenarioStepError } from "./runner.js";
 import type { ScenarioRunInput } from "./runner.js";
 
 const TEXT = "Pay $120 to acme for invoice 42";
@@ -150,5 +150,82 @@ describe("runScenario: multi-intent and foreign callers", () => {
     expect(
       obs.coreCalls.filter((c) => c.method === "startPaymentWorkflow"),
     ).toHaveLength(1);
+  });
+});
+
+describe("runScenario: step selector", () => {
+  it("throws ScenarioStepError for an out-of-range intent index", async () => {
+    await expect(
+      runScenario(
+        input(new RecordingAgentCoreClient(), {
+          steps: [{ kind: "get", intent: 3 }],
+        }),
+      ),
+    ).rejects.toThrow(ScenarioStepError);
+  });
+
+  it("throws ScenarioStepError for a step after a submit that returned no view", async () => {
+    await expect(
+      runScenario(
+        input(new RecordingAgentCoreClient(), {
+          text: " ",
+          steps: [{ kind: "get" }],
+        }),
+      ),
+    ).rejects.toThrow(ScenarioStepError);
+  });
+
+  it("throws the no-view error (not the range error) for a step after a failed submit step", async () => {
+    await expect(
+      runScenario(
+        input(new RecordingAgentCoreClient(), {
+          steps: [{ kind: "submit", idempotencyKey: "k2" }, { kind: "get" }],
+        }),
+      ),
+    ).rejects.toThrow(/follows a submit that returned no intent view/);
+  });
+
+  it("addresses intents by Observation.intents index, not by submit order", async () => {
+    const big = () =>
+      paymentProposal({
+        amount: 60000,
+        currency: "USD",
+        merchantId: "acme",
+        reasoning: "Invoice 42 for acme.",
+      });
+    const obs = await runScenario(
+      input(new RecordingAgentCoreClient(), {
+        text: "Pay $600 to acme for invoice 42",
+        idempotencyKey: "idem-1",
+        llm: new ScriptedLlmClient([big(), big()]),
+        steps: [
+          { kind: "submit", idempotencyKey: "idem-2" },
+          { kind: "approve", intent: 0 },
+        ],
+      }),
+    );
+    const [a, b] = obs.intents;
+    const approve = obs.http.find((h) => h.path.endsWith("/approve"));
+    expect(approve?.path).toBe(`/intents/${a?.id ?? ""}/approve`);
+    expect(a?.finalView?.status).toBe("executing");
+    expect(b?.finalView?.status).toBe("needs_approval");
+  });
+
+  it("a foreign `as` clarify is 404 and records no answer", async () => {
+    const obs = await runScenario(
+      input(new RecordingAgentCoreClient(), {
+        llm: new ScriptedLlmClient([
+          clarifyProposal("Which vendor?"),
+          benign(),
+        ]),
+        steps: [
+          { kind: "clarify", answer: "the vendor is acme", as: "cust_foreign" },
+        ],
+      }),
+    );
+    const clarify = obs.http.find((h) => h.path.endsWith("/clarify"));
+    expect(clarify?.customerId).toBe("cust_foreign");
+    expect(clarify?.status).toBe(404);
+    expect(obs.clarificationAnswers).toEqual([]);
   });
 });

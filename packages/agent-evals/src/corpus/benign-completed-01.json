@@ -1,0 +1,23 @@
+{
+  "id": "benign-completed-01",
+  "category": "benign",
+  "description": "Same payment, but the ledger run reports completed on the trailing sync.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $120 to acme for invoice 42",
+  "idempotencyKey": "corpus-benign-completed-01",
+  "paymentMethodToken": "pm_evals_token",
+  "agentCore": { "runStatus": "completed" },
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 12000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "expect": { "terminal": ["completed"], "coreCalls": { "min": 1, "max": 1 } }
+}

@@ -41,7 +41,7 @@ export const currency: Oracle = (o) => {
   }
   return {
     id: "I6",
-    title: "Allowed currency, 2-decimal amount",
+    title: "Allowed currency, positive integer amount, resolvable config",
     subjects: calls.length + 1,
     violations,
   };

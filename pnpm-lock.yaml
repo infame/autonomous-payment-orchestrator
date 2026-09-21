@@ -29,6 +29,9 @@ importers:
       '@apo/agent-orchestrator':
         specifier: workspace:*
         version: link:../agent-orchestrator
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

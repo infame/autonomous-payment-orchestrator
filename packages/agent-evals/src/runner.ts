@@ -15,6 +15,14 @@
  * Foreign submits are not supported. `intentId`/`finalView` on Observation
  * alias intents[0].
  *
+ * Step `intent` selector: `intent` indexes `Observation.intents` (deduped by
+ * id, submission order) - NOT the sequence of `submit` steps; a same-key
+ * resubmit does not add an entry. Omitted => the most recently submitted
+ * intent. An out-of-range index, or any step after a submit that returned no
+ * view (4xx/5xx), throws `ScenarioStepError` - the harness never silently
+ * drops a step, because a skipped approve would turn a missing effect into a
+ * false green.
+ *
  * `Observation.coreCalls` is sliced from the recorder's journal length
  * captured before the first exchange, so a reused injected recorder's earlier
  * (foreign) calls are excluded; `coreCallIndexes` stay absolute journal indexes.
@@ -34,6 +42,13 @@ import type {
 } from "@apo/agent-orchestrator";
 import { RecordingAgentCoreClient } from "./core/recording-agent-core-client.js";
 import type { RecordedCoreCall } from "./core/recording-agent-core-client.js";
+
+export class ScenarioStepError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ScenarioStepError";
+  }
+}
 
 export type Step =
   | { readonly kind: "submit"; readonly idempotencyKey?: string }
@@ -208,12 +223,14 @@ export async function runScenario(
     return { status: res.status, view: view ?? null, httpIndex };
   };
 
-  const submit = async (idempotencyKey: string | undefined): Promise<void> => {
+  const submit = async (
+    idempotencyKey: string | undefined,
+  ): Promise<boolean> => {
     const result = await exchange("POST", "/intents", {
       body: { text: input.text },
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
     });
-    if (result.view === null) return;
+    if (result.view === null) return false;
     const existing = intents.find((i) => i.id === result.view?.id);
     if (existing === undefined) {
       intents.push({
@@ -226,6 +243,7 @@ export async function runScenario(
     } else {
       existing.views.push(result.view);
     }
+    return true;
   };
 
   const ownerExchange = async (
@@ -242,16 +260,27 @@ export async function runScenario(
     return result;
   };
 
-  await submit(input.idempotencyKey);
+  let lastSubmitHadView = await submit(input.idempotencyKey);
 
+  let stepIndex = -1;
   for (const step of input.steps ?? []) {
+    stepIndex += 1;
     if (step.kind === "submit") {
-      await submit(step.idempotencyKey);
+      lastSubmitHadView = await submit(step.idempotencyKey);
       continue;
+    }
+    if (!lastSubmitHadView) {
+      throw new ScenarioStepError(
+        `step ${String(stepIndex)} (${step.kind}) follows a submit that returned no intent view`,
+      );
     }
     const target =
       step.intent === undefined ? intents.at(-1) : intents[step.intent];
-    if (target === undefined) continue;
+    if (target === undefined) {
+      throw new ScenarioStepError(
+        `step ${String(stepIndex)} (${step.kind}) targets intent ${step.intent === undefined ? "(most recent)" : String(step.intent)} but only ${String(intents.length)} intent(s) are known`,
+      );
+    }
     const path = `/intents/${target.id}`;
     const method = step.kind === "get" ? "GET" : "POST";
     const suffix = step.kind === "get" ? "" : `/${step.kind}`;

@@ -79,4 +79,51 @@ describe("I5 exactly-once", () => {
     expect(r.subjects).toBe(2);
     expect(r.violations).toEqual([]);
   });
+
+  it("catches two intents sharing one request idempotency key", () => {
+    const r = exactlyOnce(
+      observation({
+        intents: [
+          observedIntent({ idempotencyKey: "k" }),
+          observedIntent({
+            id: "intent_2",
+            submitExchangeIndex: 1,
+            idempotencyKey: "k",
+          }),
+        ],
+      }),
+    );
+    expect(r.subjects).toBe(2);
+    expect(r.violations).toHaveLength(1);
+    expect(r.violations[0]?.intentId).toBe("intent_2");
+    expect(r.violations[0]?.httpIndex).toBe(1);
+  });
+
+  it("passes two intents with distinct request idempotency keys", () => {
+    const r = exactlyOnce(
+      observation({
+        intents: [
+          observedIntent({ idempotencyKey: "a" }),
+          observedIntent({
+            id: "intent_2",
+            submitExchangeIndex: 1,
+            idempotencyKey: "b",
+          }),
+        ],
+      }),
+    );
+    expect(r.subjects).toBe(2);
+    expect(r.violations).toEqual([]);
+  });
+
+  it("passes a same-key resubmit modelled as one intent with two views", () => {
+    const first = observedIntent({ idempotencyKey: "k" });
+    const r = exactlyOnce(
+      observation({
+        intents: [{ ...first, views: [...first.views, ...first.views] }],
+      }),
+    );
+    expect(r.subjects).toBe(1);
+    expect(r.violations).toEqual([]);
+  });
 });

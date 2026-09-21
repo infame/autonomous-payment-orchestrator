@@ -41,6 +41,23 @@ describe("I6 currency", () => {
     expect(r.violations).toHaveLength(1);
   });
 
+  it("catches a fractional amount", () => {
+    const r = currency(
+      observation({ coreCalls: [call("USD", 120.5)], http: linked }),
+    );
+    expect(r.violations).toHaveLength(1);
+  });
+
+  it("catches an amount beyond the safe-integer range", () => {
+    const r = currency(
+      observation({
+        coreCalls: [call("USD", Number.MAX_SAFE_INTEGER + 2)],
+        http: linked,
+      }),
+    );
+    expect(r.violations).toHaveLength(1);
+  });
+
   it("passes USD 12000", () => {
     const r = currency(
       observation({ coreCalls: [call("USD", 12000)], http: linked }),

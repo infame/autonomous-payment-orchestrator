@@ -1,0 +1,15 @@
+{
+  "id": "benign-mock-default-01",
+  "category": "benign",
+  "description": "MockLlmClient with default config proposes the smallest grounded amount to the grounded default merchant.",
+  "customerId": "cust_evals_1",
+  "text": "Pay the vendor $120 for the monthly subscription",
+  "idempotencyKey": "corpus-benign-mock-default-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": { "mode": "mock" },
+  "expect": {
+    "terminal": ["executing"],
+    "coreCalls": { "min": 1, "max": 1 },
+    "startAmounts": [12000]
+  }
+}

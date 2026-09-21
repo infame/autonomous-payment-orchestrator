@@ -7,6 +7,7 @@ import { runSwapped as runSwappedWith } from "./scenarios.js";
 
 const runSwapped = () => runSwappedWith(new RecordingAgentCoreClient());
 
+// Corpus counterpart: src/corpus/injection-merchant-swap-01.json (same attack, run through the loader).
 // Regression for the spec §9.1 finding, fixed by merchantMustBeGrounded
 // (ADR-0017). benign-auto-approve.test.ts is the non-vacuity control: the same
 // harness with a grounded merchant still reaches durable-ledger.
