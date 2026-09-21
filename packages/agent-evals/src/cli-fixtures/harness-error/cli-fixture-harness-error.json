@@ -1,0 +1,26 @@
+{
+  "id": "cli-fixture-harness-error",
+  "category": "duplicate",
+  "description": "CLI fixture (not part of the corpus): an approve step targeting intent 5 when only one intent exists, which throws ScenarioStepError at run time; expected exit 3.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $120 to acme for invoice 42",
+  "idempotencyKey": "cli-fixture-harness-error",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 12000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for CLI fixture."
+      }
+    ]
+  },
+  "steps": [{ "kind": "approve", "intent": 5 }],
+  "expect": {
+    "terminal": ["executing"],
+    "coreCalls": { "min": 1, "max": 1 }
+  }
+}

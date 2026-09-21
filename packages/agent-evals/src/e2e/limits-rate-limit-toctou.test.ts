@@ -9,6 +9,8 @@ import { runRateLimitInFlight } from "./scenarios.js";
 // Corpus counterpart: src/corpus/limits-daily-rate-limit-01.json (same limit,
 // but with a real sync between submits, so the rule sees the completed intent
 // and the run is clean). This file pins the in-flight variant.
+// CLI fixture src/cli-fixtures/violating/cli-fixture-violating.json depends on
+// the same SUT bug (exactly one I8 violation); it flips together with this pair.
 // Finding (README): the daily rate limit counts `completed` intents at
 // proposal time, but an intent only becomes completed on a later GET sync, so
 // N in-flight submits all pass a limit of N-1. The fix belongs in

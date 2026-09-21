@@ -71,3 +71,28 @@ jobs:
       - run: docker build -f packages/pay-core/Dockerfile -t apo/pay-core:ci .
       - run: docker build -f packages/durable-ledger/Dockerfile -t apo/durable-ledger:ci .
       - run: docker build -f packages/agent-orchestrator/Dockerfile -t apo/agent-orchestrator:ci .
+
+  evals:
+    name: agent-evals (hostile corpus)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # No build step here: eval:hostile's pre-script builds
+      # @apo/agent-orchestrator (only its dist is consumed) and the CLI itself
+      # runs from src via tsx. The step exits non-zero on any safety violation
+      # (the only gate; the other metrics are informational).
+      - run: pnpm --filter @apo/agent-evals eval:hostile
+      # if: always() so the report of a FAILED run is still uploaded, which is
+      # exactly when someone needs to read it.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: agent-evals-hostile-report
+          path: packages/agent-evals/reports/
+          if-no-files-found: error

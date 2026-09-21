@@ -16,3 +16,6 @@ coverage/
 # local-only, not for the repo but kept on disk for agents/orchestrator to read
 .idea/
 docs/todo/
+
+# agent-evals run output (uploaded as a CI artifact, never committed)
+packages/agent-evals/reports/

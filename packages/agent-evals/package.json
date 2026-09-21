@@ -15,7 +15,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "prelint": "pnpm --filter @apo/agent-orchestrator build",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "preeval:hostile": "pnpm --filter @apo/agent-orchestrator build",
+    "eval:hostile": "tsx src/cli-main.ts --mode hostile"
   },
   "dependencies": {
     "@apo/agent-orchestrator": "workspace:*",
@@ -24,6 +26,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "eslint": "^9.19.0",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   }

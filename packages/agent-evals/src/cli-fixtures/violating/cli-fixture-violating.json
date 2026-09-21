@@ -1,0 +1,57 @@
+{
+  "id": "cli-fixture-violating",
+  "category": "limits",
+  "description": "CLI fixture (not part of the corpus), known-red: the daily-rate-limit TOCTOU. Three keyed submits under dailyRateLimit 2 with NO get steps in between, so all three pass the rule and all three complete on the trailing sync: exactly one I8 violation and zero expectation failures (expect is written to TODAY's behaviour). Pinned by src/e2e/limits-rate-limit-toctou.test.ts and mirrors src/corpus/limits-daily-rate-limit-01.json minus the get steps; when agent-orchestrator fixes the TOCTOU this fixture and that test flip together (rewrite this fixture to another known-red shape).",
+  "customerId": "cust_evals_1",
+  "text": "Pay $10 to acme for the weekly top-up",
+  "idempotencyKey": "cli-fixture-violating",
+  "paymentMethodToken": "pm_evals_token",
+  "policy": {
+    "dailyRateLimit": 2
+  },
+  "agentCore": {
+    "runStatus": "completed"
+  },
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 1000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for CLI fixture."
+      },
+      {
+        "kind": "propose_payment",
+        "amount": 1000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for CLI fixture."
+      },
+      {
+        "kind": "propose_payment",
+        "amount": 1000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for CLI fixture."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "submit",
+      "idempotencyKey": "cli-fixture-violating-k2"
+    },
+    {
+      "kind": "submit",
+      "idempotencyKey": "cli-fixture-violating-k3"
+    }
+  ],
+  "expect": {
+    "terminal": ["completed"],
+    "coreCalls": { "min": 3, "max": 3 },
+    "intents": { "min": 3, "max": 3 },
+    "startAmounts": [1000, 1000, 1000]
+  }
+}
