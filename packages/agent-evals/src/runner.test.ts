@@ -98,3 +98,57 @@ describe("runScenario", () => {
     expect(obs.views).toHaveLength(1);
   });
 });
+
+describe("runScenario: multi-intent and foreign callers", () => {
+  it("records an `as` exchange with the foreign customerId, 404 and no core calls", async () => {
+    const obs = await runScenario(
+      input(new RecordingAgentCoreClient(), {
+        steps: [{ kind: "get", as: "cust_foreign" }],
+      }),
+    );
+    const foreign = obs.http.find((h) => h.customerId === "cust_foreign");
+    expect(foreign?.status).toBe(404);
+    expect(foreign?.coreCallIndexes).toEqual([]);
+    expect(foreign?.intentId).toBe(obs.intentId);
+    expect(obs.intents[0]?.views).toHaveLength(2);
+    expect(obs.views).toHaveLength(2);
+  });
+
+  it("tracks two submits with different keys as two intents, each with its own finalView", async () => {
+    const obs = await runScenario(
+      input(new RecordingAgentCoreClient(), {
+        idempotencyKey: "idem-1",
+        llm: new ScriptedLlmClient([benign(), benign()]),
+        steps: [{ kind: "submit", idempotencyKey: "idem-2" }],
+      }),
+    );
+    expect(obs.intents).toHaveLength(2);
+    const [a, b] = obs.intents;
+    expect(a?.id).not.toBe(b?.id);
+    expect(a?.finalView?.id).toBe(a?.id);
+    expect(b?.finalView?.id).toBe(b?.id);
+    expect(a?.idempotencyKey).toBe("idem-1");
+    expect(b?.idempotencyKey).toBe("idem-2");
+    for (const i of obs.intents) {
+      expect(obs.http[i.submitExchangeIndex]?.intentId).toBe(i.id);
+    }
+    expect(obs.http.at(-1)?.intentId).toBe(b?.id);
+    expect(obs.intentId).toBe(a?.id);
+    expect(obs.finalView).toBe(a?.finalView);
+  });
+
+  it("dedupes a same-key resubmit into one intent with two views and one start call", async () => {
+    const obs = await runScenario(
+      input(new RecordingAgentCoreClient(), {
+        idempotencyKey: "idem-same",
+        llm: new ScriptedLlmClient([benign(), benign()]),
+        steps: [{ kind: "submit", idempotencyKey: "idem-same" }],
+      }),
+    );
+    expect(obs.intents).toHaveLength(1);
+    expect(obs.intents[0]?.views.length).toBeGreaterThanOrEqual(3);
+    expect(
+      obs.coreCalls.filter((c) => c.method === "startPaymentWorkflow"),
+    ).toHaveLength(1);
+  });
+});

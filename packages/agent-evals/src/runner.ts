@@ -4,11 +4,16 @@
  * returns an `Observation` for oracles to judge.
  *
  * Every Step maps 1:1 to an HTTP call. `get` IS the sync: GET /intents/:id
- * can move an intent executing -> completed. The runner always issues one
- * final GET (skipped when no intent id was obtained) and takes `finalView`
- * from that exchange's own response (null when it carried no intent view).
- * The intent id is read from the 201 body (deriveIntentId is not
- * exported).
+ * can move an intent executing -> completed. After the steps the runner
+ * issues one trailing GET per known intent (submission order, always as the
+ * owner) and takes each `ObservedIntent.finalView` from that exchange's own
+ * response (null when it carried no intent view). Intent ids are read from
+ * the 201 bodies (deriveIntentId is not exported). Intents are deduped by id:
+ * a same-key resubmit (ADR-0015) appends a view to the existing entry.
+ * `as` overrides X-Customer-Id for one id-addressed exchange (foreign
+ * caller); such exchanges land only in `http`, never in an intent's views.
+ * Foreign submits are not supported. `intentId`/`finalView` on Observation
+ * alias intents[0].
  *
  * `Observation.coreCalls` is sliced from the recorder's journal length
  * captured before the first exchange, so a reused injected recorder's earlier
@@ -17,8 +22,9 @@
  * `coreCallIndexes` (core journal indexes made DURING one exchange) are
  * ABSOLUTE journal indexes: match them against `RecordedCoreCall.index`, not
  * against a position in `Observation.coreCalls`, which is sliced from the
- * run's start. Attribution is only correct because requests are awaited sequentially;
- * revisit when parallel-duplicate scenarios arrive.
+ * run's start. Attribution (core call -> exchange -> intent) is sound only because
+ * exchanges are awaited sequentially and `as` is id-addressed-only; revisit
+ * when parallel-duplicate scenarios arrive.
  */
 import { createInMemoryAgentOrchestrator } from "@apo/agent-orchestrator";
 import type {
@@ -30,10 +36,24 @@ import { RecordingAgentCoreClient } from "./core/recording-agent-core-client.js"
 import type { RecordedCoreCall } from "./core/recording-agent-core-client.js";
 
 export type Step =
-  | { readonly kind: "clarify"; readonly answer: string }
-  | { readonly kind: "approve" }
-  | { readonly kind: "reject" }
-  | { readonly kind: "get" };
+  | { readonly kind: "submit"; readonly idempotencyKey?: string }
+  | {
+      readonly kind: "clarify";
+      readonly answer: string;
+      readonly as?: string;
+      readonly intent?: number;
+    }
+  | {
+      readonly kind: "approve";
+      readonly as?: string;
+      readonly intent?: number;
+    }
+  | {
+      readonly kind: "reject";
+      readonly as?: string;
+      readonly intent?: number;
+    }
+  | { readonly kind: "get"; readonly as?: string; readonly intent?: number };
 
 export interface ScenarioRunInput {
   readonly id: string;
@@ -60,8 +80,11 @@ export interface HttpExchange {
   readonly index: number;
   readonly method: "GET" | "POST";
   readonly path: string;
+  /** Header actually sent (may be foreign, see Step `as`). */
   readonly customerId: string;
   readonly idempotencyKey: string | undefined;
+  /** Intent addressed; null for a POST /intents that returned no view. */
+  readonly intentId: string | null;
   readonly status: number;
   readonly body: unknown;
   /**
@@ -72,22 +95,49 @@ export interface HttpExchange {
   readonly coreCallIndexes: readonly number[];
 }
 
+export interface ObservedIntent {
+  readonly id: string;
+  /** Index into `http` of the POST /intents that first returned this id. */
+  readonly submitExchangeIndex: number;
+  readonly idempotencyKey: string | null;
+  /** Owner-exchange views only, in order. */
+  readonly views: readonly IntentViewJson[];
+  /** From this intent's own trailing GET. */
+  readonly finalView: IntentViewJson | null;
+}
+
 export interface Observation {
   readonly scenarioId: string;
+  /** OWNER; any exchange with a different customerId is foreign. */
   readonly customerId: string;
+  /** ORIGINAL scenario text as the harness sent it; never read back from a view. */
   readonly text: string;
+  /** Only answers whose clarify exchange was 2xx. */
   readonly clarificationAnswers: readonly string[];
+  readonly intents: readonly ObservedIntent[];
+  /** Alias of intents[0]?.id. */
   readonly intentId: string | null;
+  /** Every view from every exchange. */
   readonly views: readonly IntentViewJson[];
+  /** Alias of intents[0]?.finalView. */
   readonly finalView: IntentViewJson | null;
   readonly coreCalls: readonly RecordedCoreCall[];
   readonly http: readonly HttpExchange[];
   readonly policy: PolicyConfig;
 }
 
+interface MutableIntent {
+  readonly id: string;
+  readonly submitExchangeIndex: number;
+  readonly idempotencyKey: string | null;
+  readonly views: IntentViewJson[];
+  finalView: IntentViewJson | null;
+}
+
 interface ExchangeResult {
   readonly status: number;
   readonly view: IntentViewJson | null;
+  readonly httpIndex: number;
 }
 
 interface IntentEnvelopeJSON {
@@ -110,19 +160,24 @@ export async function runScenario(
   const http: HttpExchange[] = [];
   const views: IntentViewJson[] = [];
   const clarificationAnswers: string[] = [];
-  let intentId: string | null = null;
-  let finalView: IntentViewJson | null = null;
+  const intents: MutableIntent[] = [];
 
   const exchange = async (
     method: "GET" | "POST",
     path: string,
-    opts: { body?: unknown; idempotencyKey?: string } = {},
+    opts: {
+      body?: unknown;
+      idempotencyKey?: string;
+      customerId?: string;
+      intentId?: string;
+    } = {},
   ): Promise<ExchangeResult> => {
+    const customerId = opts.customerId ?? input.customerId;
     const before = agentCore.calls.length;
     const res = await app.request(path, {
       method,
       headers: {
-        "X-Customer-Id": input.customerId,
+        "X-Customer-Id": customerId,
         ...(opts.idempotencyKey === undefined
           ? {}
           : { "Idempotency-Key": opts.idempotencyKey }),
@@ -136,57 +191,97 @@ export async function runScenario(
     const after = agentCore.calls.length;
     const coreCallIndexes: number[] = [];
     for (let i = before; i < after; i += 1) coreCallIndexes.push(i);
+    const view = (parsed as IntentEnvelopeJSON).intent;
+    const httpIndex = http.length;
     http.push({
-      index: http.length,
+      index: httpIndex,
       method,
       path,
-      customerId: input.customerId,
+      customerId,
       idempotencyKey: opts.idempotencyKey,
+      intentId: opts.intentId ?? view?.id ?? null,
       status: res.status,
       body: parsed,
       coreCallIndexes,
     });
-    const view = (parsed as IntentEnvelopeJSON).intent;
     if (view !== undefined) views.push(view);
-    return { status: res.status, view: view ?? null };
+    return { status: res.status, view: view ?? null, httpIndex };
   };
 
-  const submitted = await exchange("POST", "/intents", {
-    body: { text: input.text },
-    ...(input.idempotencyKey === undefined
-      ? {}
-      : { idempotencyKey: input.idempotencyKey }),
-  });
-  intentId = submitted.view?.id ?? null;
-
-  if (intentId !== null) {
-    for (const step of input.steps ?? []) {
-      switch (step.kind) {
-        case "clarify": {
-          const result = await exchange(
-            "POST",
-            `/intents/${intentId}/clarify`,
-            {
-              body: { answer: step.answer },
-            },
-          );
-          if (result.status >= 200 && result.status < 300) {
-            clarificationAnswers.push(step.answer);
-          }
-          break;
-        }
-        case "approve":
-          await exchange("POST", `/intents/${intentId}/approve`);
-          break;
-        case "reject":
-          await exchange("POST", `/intents/${intentId}/reject`);
-          break;
-        case "get":
-          await exchange("GET", `/intents/${intentId}`);
-          break;
-      }
+  const submit = async (idempotencyKey: string | undefined): Promise<void> => {
+    const result = await exchange("POST", "/intents", {
+      body: { text: input.text },
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    });
+    if (result.view === null) return;
+    const existing = intents.find((i) => i.id === result.view?.id);
+    if (existing === undefined) {
+      intents.push({
+        id: result.view.id,
+        submitExchangeIndex: result.httpIndex,
+        idempotencyKey: idempotencyKey ?? null,
+        views: [result.view],
+        finalView: null,
+      });
+    } else {
+      existing.views.push(result.view);
     }
-    finalView = (await exchange("GET", `/intents/${intentId}`)).view;
+  };
+
+  const ownerExchange = async (
+    target: MutableIntent,
+    method: "GET" | "POST",
+    path: string,
+    opts: { body?: unknown } = {},
+  ): Promise<ExchangeResult> => {
+    const result = await exchange(method, path, {
+      ...opts,
+      intentId: target.id,
+    });
+    if (result.view !== null) target.views.push(result.view);
+    return result;
+  };
+
+  await submit(input.idempotencyKey);
+
+  for (const step of input.steps ?? []) {
+    if (step.kind === "submit") {
+      await submit(step.idempotencyKey);
+      continue;
+    }
+    const target =
+      step.intent === undefined ? intents.at(-1) : intents[step.intent];
+    if (target === undefined) continue;
+    const path = `/intents/${target.id}`;
+    const method = step.kind === "get" ? "GET" : "POST";
+    const suffix = step.kind === "get" ? "" : `/${step.kind}`;
+    const body = step.kind === "clarify" ? { answer: step.answer } : undefined;
+    let result: ExchangeResult;
+    if (step.as === undefined) {
+      result = await ownerExchange(target, method, `${path}${suffix}`, {
+        ...(body === undefined ? {} : { body }),
+      });
+    } else {
+      result = await exchange(method, `${path}${suffix}`, {
+        ...(body === undefined ? {} : { body }),
+        customerId: step.as,
+        intentId: target.id,
+      });
+    }
+    if (
+      step.kind === "clarify" &&
+      step.as === undefined &&
+      result.status >= 200 &&
+      result.status < 300
+    ) {
+      clarificationAnswers.push(step.answer);
+    }
+  }
+
+  for (const target of intents) {
+    target.finalView = (
+      await ownerExchange(target, "GET", `/intents/${target.id}`)
+    ).view;
   }
 
   return {
@@ -194,9 +289,10 @@ export async function runScenario(
     customerId: input.customerId,
     text: input.text,
     clarificationAnswers,
-    intentId,
+    intents,
+    intentId: intents[0]?.id ?? null,
     views,
-    finalView,
+    finalView: intents[0]?.finalView ?? null,
     coreCalls: agentCore.calls.slice(journalStart),
     http,
     policy,

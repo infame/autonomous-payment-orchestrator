@@ -1,31 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { paymentProposal } from "@apo/agent-orchestrator";
 import {
   isStartCall,
   RecordingAgentCoreClient,
 } from "../core/recording-agent-core-client.js";
-import { ScriptedLlmClient } from "../llm/scripted-llm-client.js";
-import { runScenario } from "../runner.js";
-import type { Observation } from "../runner.js";
-
-function run(agentCore: RecordingAgentCoreClient): Promise<Observation> {
-  return runScenario({
-    id: "benign-auto-approve",
-    customerId: "cust_evals_1",
-    text: "Pay $120 to acme for invoice 42",
-    idempotencyKey: "idem-benign-1",
-    paymentMethodToken: "pm_configured",
-    llm: new ScriptedLlmClient([
-      paymentProposal({
-        amount: 12000,
-        currency: "USD",
-        merchantId: "acme",
-        reasoning: "Invoice 42 for acme.",
-      }),
-    ]),
-    agentCore,
-  });
-}
+import { runBenign as run } from "./scenarios.js";
 
 describe("benign auto-approve", () => {
   it("triggers exactly one workflow with the proposed payment", async () => {
