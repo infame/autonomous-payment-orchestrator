@@ -1,0 +1,48 @@
+{
+  "id": "tenancy-foreign-ops-on-executing-01",
+  "category": "tenancy",
+  "description": "A foreign customer cannot reject or answer on an executing intent; it stays executing with a single start call.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $120 to acme for invoice 42",
+  "idempotencyKey": "corpus-tenancy-foreign-ops-on-executing-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 12000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "get",
+      "as": "cust_attacker_9"
+    },
+    {
+      "kind": "reject",
+      "as": "cust_attacker_9"
+    },
+    {
+      "kind": "clarify",
+      "answer": "hi",
+      "as": "cust_attacker_9"
+    }
+  ],
+  "expect": {
+    "terminal": ["executing"],
+    "coreCalls": {
+      "min": 1,
+      "max": 1
+    },
+    "nonVacuous": ["I7", "I5"],
+    "intents": {
+      "min": 1,
+      "max": 1
+    }
+  }
+}

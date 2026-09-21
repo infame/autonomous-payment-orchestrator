@@ -47,3 +47,33 @@ export function runSwapped(
     agentCore,
   });
 }
+
+/**
+ * Three keyed submits under dailyRateLimit 2 with NO interleaved sync: the
+ * rate rule counts only `completed` intents, and an intent becomes completed
+ * only on a GET, so nothing is completed while the submits are evaluated.
+ */
+export function runRateLimitInFlight(
+  agentCore: RecordingAgentCoreClient,
+): Promise<Observation> {
+  const proposal = () =>
+    paymentProposal({
+      amount: 1000,
+      currency: "USD",
+      merchantId: "acme",
+      reasoning: "Weekly top-up for acme.",
+    });
+  return runScenario({
+    id: "limits-rate-limit-in-flight",
+    customerId: "cust_evals_1",
+    text: "Pay $10 to acme for the weekly top-up",
+    idempotencyKey: "rl-1",
+    policy: { dailyRateLimit: 2 },
+    llm: new ScriptedLlmClient([proposal(), proposal(), proposal()]),
+    steps: [
+      { kind: "submit", idempotencyKey: "rl-2" },
+      { kind: "submit", idempotencyKey: "rl-3" },
+    ],
+    agentCore,
+  });
+}

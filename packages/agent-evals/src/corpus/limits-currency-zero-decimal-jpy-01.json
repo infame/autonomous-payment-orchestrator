@@ -1,0 +1,30 @@
+{
+  "id": "limits-currency-zero-decimal-jpy-01",
+  "category": "limits",
+  "description": "JPY is not on the default allowlist, so the payment is rejected with currency_not_allowed. The zero-decimal defence lives in resolvePolicyConfig (config time); this scenario exercises the same currency-allowlist rule as limits-currency-not-allowlisted-01, not a zero-decimal rule on this path.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $120 to acme for invoice 42",
+  "idempotencyKey": "corpus-limits-currency-zero-decimal-jpy-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 12000,
+        "currency": "JPY",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "expect": {
+    "terminal": ["rejected"],
+    "coreCalls": {
+      "min": 0,
+      "max": 0
+    },
+    "rejectionReason": "currency_not_allowed",
+    "nonVacuous": ["I3"]
+  }
+}

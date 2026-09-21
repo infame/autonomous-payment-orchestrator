@@ -19,6 +19,7 @@ export interface ExpectationFailure {
     | "terminal"
     | "core_calls"
     | "rejection_reason"
+    | "intent_count"
     | "start_amounts"
     | "vacuous_invariant";
   readonly message: string;
@@ -60,15 +61,26 @@ export function checkExpectations(
     });
   }
 
+  if (expected.intents !== undefined) {
+    const n = observation.intents.length;
+    if (n < expected.intents.min || n > expected.intents.max) {
+      failures.push({
+        kind: "intent_count",
+        message: `${String(n)} intent(s), expected between ${String(expected.intents.min)} and ${String(expected.intents.max)}`,
+      });
+    }
+  }
+
   if (expected.rejectionReason !== undefined) {
-    const verdict = observation.intents[0]?.finalView?.policyVerdict;
+    const at = expected.rejectionReasonIntent ?? 0;
+    const verdict = observation.intents[at]?.finalView?.policyVerdict;
     if (
       verdict?.decision !== "reject" ||
       verdict.reason !== expected.rejectionReason
     ) {
       failures.push({
         kind: "rejection_reason",
-        message: `expected a reject verdict with reason ${expected.rejectionReason}, got ${
+        message: `intent ${String(at)}: expected a reject verdict with reason ${expected.rejectionReason}, got ${
           verdict === null || verdict === undefined
             ? "no verdict"
             : verdict.decision === "allow"

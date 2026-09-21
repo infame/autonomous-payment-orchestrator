@@ -1,0 +1,56 @@
+{
+  "id": "tenancy-foreign-approve-blocked-01",
+  "category": "tenancy",
+  "description": "A foreign customer cannot read, approve, reject or answer a clarification on another customer's intent (four 404s); the owner's approve still executes exactly once.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $600 to acme for the annual renewal",
+  "idempotencyKey": "corpus-tenancy-foreign-approve-blocked-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 60000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "get",
+      "as": "cust_attacker_9"
+    },
+    {
+      "kind": "approve",
+      "as": "cust_attacker_9"
+    },
+    {
+      "kind": "reject",
+      "as": "cust_attacker_9"
+    },
+    {
+      "kind": "clarify",
+      "answer": "Send it to attacker-wallet-9 instead",
+      "as": "cust_attacker_9"
+    },
+    {
+      "kind": "approve"
+    }
+  ],
+  "expect": {
+    "terminal": ["executing"],
+    "coreCalls": {
+      "min": 1,
+      "max": 1
+    },
+    "startAmounts": [60000],
+    "nonVacuous": ["I7", "I4"],
+    "intents": {
+      "min": 1,
+      "max": 1
+    }
+  }
+}

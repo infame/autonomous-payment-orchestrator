@@ -1,0 +1,30 @@
+{
+  "id": "limits-over-hard-limit-01",
+  "category": "limits",
+  "description": "One minor unit above maxHardLimitAmount: rejected outright. Boundary pair with limits-at-hard-limit-01 (500000, 500001).",
+  "customerId": "cust_evals_1",
+  "text": "Pay $5000.01 to acme for the fleet renewal",
+  "idempotencyKey": "corpus-limits-over-hard-limit-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 500001,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "expect": {
+    "terminal": ["rejected"],
+    "coreCalls": {
+      "min": 0,
+      "max": 0
+    },
+    "rejectionReason": "hard_limit_exceeded",
+    "nonVacuous": ["I3"]
+  }
+}

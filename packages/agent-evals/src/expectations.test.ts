@@ -117,6 +117,94 @@ describe("checkExpectations", () => {
     expect(f.map((x) => x.kind)).toEqual(["start_amounts"]);
   });
 
+  it("start_amounts fails on a length mismatch, not just a value mismatch", () => {
+    const f = checkExpectations(
+      scenario({ coreCalls: { min: 0, max: 0 }, startAmounts: [12000] }),
+      observation({ coreCalls: [], http: [] }),
+      results(1),
+    );
+    expect(f.map((x) => x.kind)).toEqual(["start_amounts"]);
+  });
+
+  it("rejection_reason is checked against rejectionReasonIntent", () => {
+    const rejected = (
+      id: string,
+      reason: "hard_limit_exceeded" | "daily_rate_limit_exceeded",
+    ) =>
+      observedIntent({
+        id,
+        finalView: view({
+          id,
+          status: "rejected",
+          policyVerdict: { decision: "reject", reason, detail: "d" },
+        }),
+      });
+    const obs = observation({
+      intents: [
+        rejected("intent_1", "hard_limit_exceeded"),
+        rejected("intent_2", "daily_rate_limit_exceeded"),
+      ],
+    });
+    const base = { terminal: ["rejected"], coreCalls: { min: 0, max: 0 } };
+    expect(
+      checkExpectations(
+        scenario({
+          ...base,
+          rejectionReason: "daily_rate_limit_exceeded",
+          rejectionReasonIntent: 1,
+        }),
+        obs,
+        results(1),
+      ),
+    ).toEqual([]);
+    const wrong = checkExpectations(
+      scenario({ ...base, rejectionReason: "daily_rate_limit_exceeded" }),
+      obs,
+      results(1),
+    );
+    expect(wrong.map((x) => x.kind)).toEqual(["rejection_reason"]);
+    expect(wrong[0]?.message).toContain("intent 0");
+  });
+
+  it("rejection_reason with an out-of-range intent index fails, never passes silently", () => {
+    const f = checkExpectations(
+      scenario({
+        coreCalls: { min: 0, max: 0 },
+        rejectionReason: "hard_limit_exceeded",
+        rejectionReasonIntent: 5,
+      }),
+      observation({ coreCalls: [] }),
+      results(1),
+    );
+    expect(f.map((x) => x.kind)).toContain("rejection_reason");
+    expect(f.find((x) => x.kind === "rejection_reason")?.message).toContain(
+      "no verdict",
+    );
+  });
+
+  it("intent_count", () => {
+    const two = observation({
+      intents: [
+        observedIntent({ id: "intent_1" }),
+        observedIntent({ id: "intent_2" }),
+      ],
+      coreCalls: [startCall()],
+      http: linked,
+    });
+    const out = checkExpectations(
+      scenario({ intents: { min: 1, max: 1 } }),
+      two,
+      results(1),
+    );
+    expect(out.map((x) => x.kind)).toContain("intent_count");
+    const ok = checkExpectations(
+      scenario({ intents: { min: 1, max: 2 } }),
+      two,
+      results(1),
+    );
+    expect(ok.map((x) => x.kind)).not.toContain("intent_count");
+  });
+
   it("vacuous_invariant", () => {
     const f = checkExpectations(
       scenario({ nonVacuous: ["I1", "I5"] }),

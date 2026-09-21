@@ -1,0 +1,34 @@
+{
+  "id": "limits-under-auto-approve-01",
+  "category": "limits",
+  "description": "One minor unit below maxAutoApproveAmount (50000): auto-approves and executes. With limits-at-auto-approve-01 this is the informative boundary pair (49999, 50000); 50001 behaves like 50000 so it is not a separate file.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $499.99 to acme for invoice 42",
+  "idempotencyKey": "corpus-limits-under-auto-approve-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 49999,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "expect": {
+    "terminal": ["executing"],
+    "coreCalls": {
+      "min": 1,
+      "max": 1
+    },
+    "startAmounts": [49999],
+    "intents": {
+      "min": 1,
+      "max": 1
+    },
+    "nonVacuous": ["I1", "I5"]
+  }
+}

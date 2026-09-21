@@ -23,6 +23,7 @@
   "expect": {
     "terminal": ["rejected"],
     "coreCalls": { "min": 0, "max": 0 },
-    "rejectionReason": "amount_not_grounded"
+    "rejectionReason": "amount_not_grounded",
+    "nonVacuous": ["I3"]
   }
 }

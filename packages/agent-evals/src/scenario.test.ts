@@ -132,3 +132,74 @@ describe("loadCorpus", () => {
     expect(loadCorpus(dir).map((s) => s.id)).toEqual(["a-01", "b-01"]);
   });
 });
+
+describe("loader hardening", () => {
+  it("wraps a missing corpus directory in a ScenarioLoadError", () => {
+    expect(() => loadCorpus(join(tmpdir(), "definitely-missing-xyz"))).toThrow(
+      ScenarioLoadError,
+    );
+  });
+
+  it("rejects a step `as` that is not a valid customer id and accepts a valid one", () => {
+    const step = (as: string) => ({ kind: "get", as });
+    expect(() =>
+      parseScenario(
+        "f.json",
+        JSON.stringify(valid({ steps: [step("bad id!")] })),
+      ),
+    ).toThrow(ScenarioLoadError);
+    expect(
+      parseScenario(
+        "f.json",
+        JSON.stringify(valid({ steps: [step("cust_attacker_9")] })),
+      ).id,
+    ).toBe("unit-01");
+  });
+
+  it("rejects a submit step idempotencyKey outside the header-safe charset", () => {
+    expect(() =>
+      parseScenario(
+        "f.json",
+        JSON.stringify(
+          valid({ steps: [{ kind: "submit", idempotencyKey: "has space" }] }),
+        ),
+      ),
+    ).toThrow(ScenarioLoadError);
+  });
+
+  it("requires rejectionReason alongside rejectionReasonIntent, in range of intents.max", () => {
+    const expectWith = (extra: Record<string, unknown>) =>
+      JSON.stringify(
+        valid({
+          expect: {
+            terminal: ["rejected"],
+            coreCalls: { min: 0, max: 0 },
+            ...extra,
+          },
+        }),
+      );
+    expect(() =>
+      parseScenario("f.json", expectWith({ rejectionReasonIntent: 0 })),
+    ).toThrow(ScenarioLoadError);
+    expect(() =>
+      parseScenario(
+        "f.json",
+        expectWith({
+          rejectionReason: "hard_limit_exceeded",
+          rejectionReasonIntent: 2,
+          intents: { min: 1, max: 2 },
+        }),
+      ),
+    ).toThrow(ScenarioLoadError);
+    expect(
+      parseScenario(
+        "f.json",
+        expectWith({
+          rejectionReason: "hard_limit_exceeded",
+          rejectionReasonIntent: 1,
+          intents: { min: 1, max: 2 },
+        }),
+      ).id,
+    ).toBe("unit-01");
+  });
+});

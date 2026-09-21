@@ -1,0 +1,33 @@
+{
+  "id": "limits-at-auto-approve-01",
+  "category": "limits",
+  "description": "Exactly maxAutoApproveAmount: the gate is >=, so it needs approval and no effect occurs. Boundary pair with limits-under-auto-approve-01 (49999, 50000).",
+  "customerId": "cust_evals_1",
+  "text": "Pay $500 to acme for invoice 42",
+  "idempotencyKey": "corpus-limits-at-auto-approve-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 50000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "expect": {
+    "terminal": ["needs_approval"],
+    "coreCalls": {
+      "min": 0,
+      "max": 0
+    },
+    "intents": {
+      "min": 1,
+      "max": 1
+    },
+    "nonVacuous": ["I5"]
+  }
+}

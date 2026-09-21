@@ -10,7 +10,11 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath, URL } from "node:url";
-import { isIntentStatus, isPolicyReasonCode } from "@apo/agent-orchestrator";
+import {
+  CUSTOMER_ID_PATTERN,
+  isIntentStatus,
+  isPolicyReasonCode,
+} from "@apo/agent-orchestrator";
 import type { IntentStatus, PolicyReasonCode } from "@apo/agent-orchestrator";
 import { z } from "zod";
 import { buildProposal } from "./llm/proposal-from-json.js";
@@ -66,32 +70,36 @@ const MockOutcomeJson = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("unavailable") }),
 ]);
 
+const IdempotencyKey = z.string().regex(/^[\x21-\x7E]{1,200}$/);
+
+const CustomerId = z.string().regex(CUSTOMER_ID_PATTERN);
+
 const StepIntent = z.number().int().min(0).optional();
 
 const ScenarioStep = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("submit"),
-    idempotencyKey: z.string().optional(),
+    idempotencyKey: IdempotencyKey.optional(),
   }),
   z.object({
     kind: z.literal("clarify"),
     answer: z.string(),
-    as: z.string().optional(),
+    as: CustomerId.optional(),
     intent: StepIntent,
   }),
   z.object({
     kind: z.literal("approve"),
-    as: z.string().optional(),
+    as: CustomerId.optional(),
     intent: StepIntent,
   }),
   z.object({
     kind: z.literal("reject"),
-    as: z.string().optional(),
+    as: CustomerId.optional(),
     intent: StepIntent,
   }),
   z.object({
     kind: z.literal("get"),
-    as: z.string().optional(),
+    as: CustomerId.optional(),
     intent: StepIntent,
   }),
 ]);
@@ -101,13 +109,10 @@ export const Scenario = z
     id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
     category: ScenarioCategory,
     description: z.string().min(1),
-    customerId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    customerId: CustomerId,
     text: z.string().min(1),
     /** Sent as Idempotency-Key on the FIRST submit; the only auto-approve trigger. */
-    idempotencyKey: z
-      .string()
-      .regex(/^[\x21-\x7E]{1,200}$/)
-      .optional(),
+    idempotencyKey: IdempotencyKey.optional(),
     paymentMethodToken: z.string().min(1).optional(),
     policy: z
       .object({
@@ -151,15 +156,43 @@ export const Scenario = z
           max: z.number().int().min(0),
         })
         .refine((c) => c.min <= c.max, { message: "coreCalls.min > max" }),
-      /** finalView.policyVerdict.reason of the first intent. */
+      /** finalView.policyVerdict.reason of the intent picked by rejectionReasonIntent. */
       rejectionReason: PolicyReasonSchema.optional(),
+      /** Which Observation.intents entry `rejectionReason` applies to. Default 0. */
+      rejectionReasonIntent: z.number().int().min(0).optional(),
+      /** Deduped intent entries observed (a same-key resubmit does NOT add one). */
+      intents: z
+        .object({
+          min: z.number().int().min(0),
+          max: z.number().int().min(0),
+        })
+        .refine((c) => c.min <= c.max, { message: "intents.min > max" })
+        .optional(),
       /** Exact ordered amounts of start calls. */
       startAmounts: z.array(z.number().int()).optional(),
       /** Oracles whose subjects must be > 0. */
       nonVacuous: z.array(InvariantIdSchema).optional(),
     }),
   })
-  .strict();
+  .strict()
+  .superRefine((s, ctx) => {
+    const { rejectionReason, rejectionReasonIntent, intents } = s.expect;
+    if (rejectionReasonIntent === undefined) return;
+    if (rejectionReason === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["expect", "rejectionReasonIntent"],
+        message: "rejectionReasonIntent requires rejectionReason",
+      });
+    }
+    if (intents !== undefined && rejectionReasonIntent >= intents.max) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["expect", "rejectionReasonIntent"],
+        message: "rejectionReasonIntent must be < intents.max",
+      });
+    }
+  });
 export type Scenario = z.infer<typeof Scenario>;
 
 export class ScenarioLoadError extends Error {
@@ -212,9 +245,15 @@ export function loadCorpus(
   dir: string | URL = DEFAULT_CORPUS_DIR,
 ): readonly Scenario[] {
   const dirPath = typeof dir === "string" ? dir : fileURLToPath(dir);
-  const files = readdirSync(dirPath)
-    .filter((f) => f.endsWith(".json"))
-    .sort();
+  let entries: string[];
+  try {
+    entries = readdirSync(dirPath);
+  } catch (err) {
+    throw new ScenarioLoadError(
+      `${dirPath}: cannot read corpus directory: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  const files = entries.filter((f) => f.endsWith(".json")).sort();
   const seen = new Map<string, string>();
   const out: Scenario[] = [];
   for (const file of files) {

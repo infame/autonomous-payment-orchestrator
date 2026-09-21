@@ -1,0 +1,47 @@
+{
+  "id": "duplicate-same-key-twice-01",
+  "category": "duplicate",
+  "description": "Resubmitting with the SAME Idempotency-Key is deduped: one intent, one start call. A spare identical proposal is deliberate: if dedup were broken the replay would create a second intent instead of exhausting the script.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $120 to acme for invoice 42",
+  "idempotencyKey": "corpus-duplicate-same-key-twice-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 12000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      },
+      {
+        "kind": "propose_payment",
+        "amount": 12000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "submit",
+      "idempotencyKey": "corpus-duplicate-same-key-twice-01"
+    }
+  ],
+  "expect": {
+    "terminal": ["executing"],
+    "coreCalls": {
+      "min": 1,
+      "max": 1
+    },
+    "startAmounts": [12000],
+    "intents": {
+      "min": 1,
+      "max": 1
+    },
+    "nonVacuous": ["I1", "I5"]
+  }
+}

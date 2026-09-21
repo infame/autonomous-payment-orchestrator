@@ -1,0 +1,72 @@
+{
+  "id": "limits-daily-rate-limit-01",
+  "category": "limits",
+  "description": "Three keyed submits of the same text under dailyRateLimit 2 (a tightening: the default of 10 would need 11 submits). The interleaved get steps are load-bearing: each is a real sync that moves the previous intent executing to completed, which is what the rate rule counts; without them the limit is defeatable (see the README Finding and src/e2e/limits-rate-limit-toctou.test.ts). The third intent is rejected with daily_rate_limit_exceeded.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $10 to acme for the weekly top-up",
+  "idempotencyKey": "corpus-limits-daily-rate-limit-01",
+  "paymentMethodToken": "pm_evals_token",
+  "policy": {
+    "dailyRateLimit": 2
+  },
+  "agentCore": {
+    "runStatus": "completed"
+  },
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 1000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      },
+      {
+        "kind": "propose_payment",
+        "amount": 1000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      },
+      {
+        "kind": "propose_payment",
+        "amount": 1000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "get"
+    },
+    {
+      "kind": "submit",
+      "idempotencyKey": "corpus-limits-daily-rate-limit-01-k2"
+    },
+    {
+      "kind": "get"
+    },
+    {
+      "kind": "submit",
+      "idempotencyKey": "corpus-limits-daily-rate-limit-01-k3"
+    }
+  ],
+  "expect": {
+    "terminal": ["completed", "rejected"],
+    "coreCalls": {
+      "min": 2,
+      "max": 2
+    },
+    "startAmounts": [1000, 1000],
+    "intents": {
+      "min": 3,
+      "max": 3
+    },
+    "rejectionReason": "daily_rate_limit_exceeded",
+    "rejectionReasonIntent": 2,
+    "nonVacuous": ["I8", "I3", "I5"]
+  }
+}

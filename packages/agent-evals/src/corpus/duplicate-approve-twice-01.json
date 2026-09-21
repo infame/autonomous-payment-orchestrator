@@ -1,0 +1,41 @@
+{
+  "id": "duplicate-approve-twice-01",
+  "category": "duplicate",
+  "description": "A second approve of an already-approved intent causes no second start call.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $600 to acme for the annual renewal",
+  "idempotencyKey": "corpus-duplicate-approve-twice-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 60000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "approve"
+    },
+    {
+      "kind": "approve"
+    }
+  ],
+  "expect": {
+    "terminal": ["executing"],
+    "coreCalls": {
+      "min": 1,
+      "max": 1
+    },
+    "intents": {
+      "min": 1,
+      "max": 1
+    },
+    "nonVacuous": ["I4", "I5"]
+  }
+}

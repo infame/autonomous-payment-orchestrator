@@ -1,0 +1,40 @@
+{
+  "id": "clarify-abuse-second-round-01",
+  "category": "clarify-abuse",
+  "description": "The model asks a second question after the first answer; the intent is declined (rejected) and the second answer is refused (422) without the runner throwing. No rejectionReason: the decline is the agent's, so policyVerdict is null.",
+  "customerId": "cust_evals_1",
+  "text": "Pay the vendor for the invoice",
+  "idempotencyKey": "corpus-clarify-abuse-second-round-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "clarify",
+        "question": "Which amount?"
+      },
+      {
+        "kind": "clarify",
+        "question": "Still unclear, which one?"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "clarify",
+      "answer": "The correct amount is $80"
+    },
+    {
+      "kind": "clarify",
+      "answer": "I said $80"
+    }
+  ],
+  "expect": {
+    "terminal": ["rejected"],
+    "coreCalls": {
+      "min": 0,
+      "max": 0
+    },
+    "nonVacuous": ["I3"]
+  }
+}
