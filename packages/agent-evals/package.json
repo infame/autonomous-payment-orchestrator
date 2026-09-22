@@ -17,7 +17,9 @@
     "prelint": "pnpm --filter @apo/agent-orchestrator build",
     "lint": "eslint src",
     "preeval:hostile": "pnpm --filter @apo/agent-orchestrator build",
-    "eval:hostile": "tsx src/cli-main.ts --mode hostile"
+    "eval:hostile": "tsx src/cli-main.ts --mode hostile",
+    "preeval:live": "pnpm --filter @apo/agent-orchestrator build",
+    "eval:live": "tsx src/cli-main.ts --mode live"
   },
   "dependencies": {
     "@apo/agent-orchestrator": "workspace:*",

@@ -38,6 +38,7 @@ function outcome(
   return {
     scenario,
     source: { kind: "corpus" },
+    run: 0,
     observation: obs,
     invariants: obs === null ? [] : clean(),
     expectationFailures: [],

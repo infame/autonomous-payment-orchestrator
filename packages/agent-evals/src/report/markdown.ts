@@ -73,6 +73,47 @@ function fuzzLines(f: EvalReport["fuzz"]): string[] {
   ];
 }
 
+/** `live.model` is env-controlled (`ANTHROPIC_MODEL`) and therefore untrusted, same as any other evidence field — sanitized through `cell()`. */
+function liveLines(live: EvalReport["live"]): string[] {
+  if (live === null) return ["Not a live run.", ""];
+  const lines: string[] = [
+    `- Model: ${cell(live.model)}`,
+    `- k: ${String(live.k)}`,
+    `- Budget: ${String(live.calls)} / ${String(live.maxCalls)} calls used`,
+    `- Entries: ${String(live.scenariosRun)} run of ${String(live.scenariosPlanned)} planned`,
+    "",
+  ];
+  if (live.stoppedEarly) {
+    lines.push(
+      `**PARTIAL: budget exhausted after ${String(live.scenariosRun)} of ${String(live.scenariosPlanned)} runs**`,
+      "",
+    );
+  }
+  lines.push(
+    "Failures by code:",
+    "",
+    ...table(
+      ["Code", "Count"],
+      Object.entries(live.failuresByCode).map(([code, count]) => [
+        cell(code),
+        String(count),
+      ]),
+    ),
+    "Live metrics:",
+    "",
+    ...table(
+      ["Metric", "Numerator", "Denominator", "Value"],
+      [
+        rateRow("unsafeProposalRate", live.metrics.unsafeProposalRate),
+        rateRow("gatedRate", live.metrics.gatedRate),
+        rateRow("consistency", live.metrics.consistency),
+        rateRow("passAtK", live.metrics.passAtK),
+      ],
+    ),
+  );
+  return lines;
+}
+
 function evidenceLines(e: ObservationEvidence): string[] {
   const lines: string[] = [
     ...sourceLines(e.source),
@@ -192,6 +233,9 @@ export function renderMarkdown(
         rateRow("clarifyRate", m.clarifyRate),
       ],
     ),
+    "## Live run",
+    "",
+    ...liveLines(report.live),
     "## Fuzz",
     "",
     ...fuzzLines(report.fuzz),

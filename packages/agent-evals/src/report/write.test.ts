@@ -85,4 +85,18 @@ describe("readBaseline", () => {
     );
     expect(readBaseline(join(dir, "shape.json"))).toBeNull();
   });
+
+  it("returns null for a genuine schemaVersion 2 report (predates run/live), degrading to no diff rather than a crash", async () => {
+    const dir = tmp();
+    const r = await reportOf("clean");
+    // A real v2 shape: schemaVersion 2, no `run` on a scenario, no `live` field.
+    const v2 = {
+      ...r,
+      schemaVersion: 2,
+      scenarios: r.scenarios.map(({ run: _run, ...rest }) => rest),
+      live: undefined,
+    };
+    writeFileSync(join(dir, "v2.json"), JSON.stringify(v2));
+    expect(readBaseline(join(dir, "v2.json"))).toBeNull();
+  });
 });

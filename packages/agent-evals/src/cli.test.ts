@@ -34,6 +34,12 @@ function harness(at = new Date("2026-03-04T05:06:07.008Z")): Harness {
       stdout: (l) => out.push(l),
       stderr: (l) => err.push(l),
       cwd: process.cwd(),
+      // Deliberately empty: no test in this file may read a real
+      // ANTHROPIC_API_KEY. Live-mode-specific tests live in
+      // cli-live.test.ts, which always injects `createLiveLlm`; the
+      // live-mode cases exercised here only ever reach `loadLiveConfig`
+      // failing on a missing key (exit 3), never a real client.
+      env: {},
     },
   };
 }
@@ -176,17 +182,21 @@ describe("runCli exit codes", () => {
     expect(readdirSync(out)).toEqual([]);
   });
 
-  it("says live mode waits for step 7", async () => {
+  it("live mode without an ANTHROPIC_API_KEY fails at config load, never touching the corpus", async () => {
     const h = harness();
-    await runCli(["--mode", "live"], h.deps);
-    expect(h.err.join("\n")).toContain("step 7");
+    const code = await runCli(["--mode", "live"], h.deps);
+    expect(code).toBe(EXIT.harnessError);
+    expect(h.err.join("\n")).toContain("ANTHROPIC_API_KEY");
   });
 
-  it("--help exits 0, prints usage and writes nothing", async () => {
+  it("--help exits 0, prints usage naming both modes, and writes nothing", async () => {
     const out = tmp();
     const h = harness();
     expect(await runCli(["--help", "--out", out], h.deps)).toBe(EXIT.ok);
     expect(h.out.join("\n")).toContain("Usage");
+    expect(h.out.join("\n")).toContain("eval:live");
+    expect(h.out.join("\n")).toContain("--k");
+    expect(h.out.join("\n")).toContain("--max-calls");
     expect(readdirSync(out)).toEqual([]);
   });
 });

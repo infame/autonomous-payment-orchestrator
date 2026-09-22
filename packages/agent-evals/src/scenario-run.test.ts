@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
+import { clarifyProposal } from "@apo/agent-orchestrator";
+import type { AgentProposal, LlmClient } from "@apo/agent-orchestrator";
 import { isStartCall } from "./core/recording-agent-core-client.js";
 import { parseScenario } from "./scenario.js";
 import { runCorpusScenario } from "./scenario-run.js";
+
+/** In-repo fake only; never a real network call or ANTHROPIC_API_KEY. */
+class StubLlmClient implements LlmClient {
+  readonly name = "stub";
+  callCount = 0;
+
+  constructor(private readonly proposal: AgentProposal) {}
+
+  reason(): Promise<AgentProposal> {
+    this.callCount += 1;
+    return Promise.resolve(this.proposal);
+  }
+}
 
 const pay = (amount: number) => ({
   kind: "propose_payment",
@@ -61,5 +76,17 @@ describe("runCorpusScenario", () => {
     const start = obs.coreCalls.find(isStartCall);
     expect(start?.request.currency).toBe("EUR");
     expect(start?.request.merchantId).toBe("acme");
+  });
+
+  it("overrides.llm takes precedence over the scenario's own script/mock client", async () => {
+    const stub = new StubLlmClient(clarifyProposal("overridden question"));
+    const obs = await runCorpusScenario(
+      scenario({
+        llm: { mode: "script", proposals: [pay(60000)] },
+      }),
+      { llm: stub },
+    );
+    expect(stub.callCount).toBe(1);
+    expect(obs.intents[0]?.finalView?.status).toBe("needs_clarification");
   });
 });

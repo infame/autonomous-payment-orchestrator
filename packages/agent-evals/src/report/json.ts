@@ -3,6 +3,12 @@
  * from `Observation` to `ObservationEvidence`: the Observation is never
  * serialised wholesale, only whitelisted numbers, ids, statuses and paths
  * (see `types.ts`).
+ *
+ * `live`, when non-null (step 7's `eval:live`), is passed straight through
+ * from the caller (`cli.ts` builds it from `BudgetedLlmClient` +
+ * `computeLiveMetrics`) — this module has no live-specific logic of its own
+ * beyond carrying the block and stamping every `ScenarioReport.run` from
+ * `ScenarioOutcome.run`.
  */
 import { isStartCall } from "../core/recording-agent-core-client.js";
 import type {
@@ -86,6 +92,7 @@ function scenarioReport(
     id: out.scenario.id,
     category: out.scenario.category,
     source: sourceOf(corpusDir, out.scenario.id, out.source),
+    run: out.run,
     ok:
       violations === 0 &&
       out.expectationFailures.length === 0 &&
@@ -112,6 +119,7 @@ export function buildReport(
   suite: SuiteResult,
   metrics: Metrics,
   baseline: EvalReport["baseline"],
+  live: EvalReport["live"] = null,
 ): EvalReport {
   const violations: ReportedViolation[] = [];
   for (const out of suite.outcomes) {
@@ -134,7 +142,7 @@ export function buildReport(
     }
   }
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     mode: suite.mode,
     startedAt: suite.startedAt.toISOString(),
     durationMs: suite.durationMs,
@@ -164,5 +172,6 @@ export function buildReport(
     scenarios: suite.outcomes.map((o) => scenarioReport(suite.corpusDir, o)),
     violations,
     baseline,
+    live,
   };
 }

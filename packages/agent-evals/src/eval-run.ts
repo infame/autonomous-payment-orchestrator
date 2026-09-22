@@ -11,17 +11,29 @@
  * entry and the outcome, never on `Scenario` and never sniffed from an id.
  *
  * `HarnessError.message` passes through ONLY for the harness's own error
- * classes (ScenarioStepError, ScenarioLoadError, ScriptExhaustedError), whose
- * messages the harness authored. Any other thrown value (a ZodError, a driver
- * or HTTP-layer error) can embed scenario text or a response body, and the
- * report is a published artifact, so its message is replaced by a fixed string
- * (the `name` is kept for triage).
+ * classes (ScenarioStepError, ScenarioLoadError, ScriptExhaustedError,
+ * LiveBudgetExhaustedError), whose messages the harness authored. Any other
+ * thrown value (a ZodError, a driver or HTTP-layer error) can embed scenario
+ * text or a response body, and the report is a published artifact, so its
+ * message is replaced by a fixed string (the `name` is kept for triage).
+ *
+ * `mode: "live"` (step 7) reuses every piece above unchanged: `RunSuiteOptions.llm`,
+ * when set, is passed straight through to `runCorpusScenario` as
+ * `CorpusRunOverrides.llm`, REPLACING each entry's own scripted/mock client —
+ * see `scenario-run.ts`'s header. `livePasses` turns one set of entries into
+ * `k` labelled copies (`SuiteEntry.run`, 0-indexed) so a live run can repeat
+ * the whole corpus `k` times; `RunSuiteOptions.stopBefore`, consulted before
+ * every entry, is how `eval:live`'s `BudgetedLlmClient` ceiling stops the
+ * suite early (`SuiteResult.stoppedEarly`/`skipped`) without `runSuite` itself
+ * knowing anything about budgets.
  */
+import type { LlmClient } from "@apo/agent-orchestrator";
 import { checkExpectations } from "./expectations.js";
 import type { ExpectationFailure } from "./expectations.js";
 import { checkInvariants } from "./oracles/index.js";
 import type { InvariantResult } from "./oracles/index.js";
 import { generateFuzzScenarios } from "./fuzz/generate.js";
+import { LiveBudgetExhaustedError } from "./llm/budgeted-llm-client.js";
 import { ScriptExhaustedError } from "./llm/scripted-llm-client.js";
 import { ScenarioStepError } from "./runner.js";
 import type { Observation } from "./runner.js";
@@ -37,6 +49,8 @@ export type ScenarioSource =
 export interface SuiteEntry {
   readonly scenario: Scenario;
   readonly source: ScenarioSource;
+  /** Which live pass this entry belongs to, 0-indexed. Default 0 (every hostile entry, and pass 0 of a live run). */
+  readonly run?: number;
 }
 
 export const corpusEntries = (
@@ -52,6 +66,26 @@ export const fuzzEntries = (
     scenario,
     source: { kind: "fuzz", seed, index },
   }));
+
+/**
+ * Repeats `entries` for `k` live passes, BLOCKED not round-robin: every entry
+ * at run 0, then every entry at run 1, and so on. That ordering matters under
+ * a call budget — a ceiling hit mid-run has covered the corpus's breadth once
+ * before it starts spending on a second pass, rather than exhausting the
+ * budget on a handful of scenarios repeated `k` times each.
+ */
+export function livePasses(
+  entries: readonly SuiteEntry[],
+  k: number,
+): readonly SuiteEntry[] {
+  const out: SuiteEntry[] = [];
+  for (let run = 0; run < k; run += 1) {
+    for (const entry of entries) {
+      out.push({ ...entry, run });
+    }
+  }
+  return out;
+}
 
 export interface FuzzRunInfo {
   readonly seed: string;
@@ -75,7 +109,8 @@ function harnessErrorOf(err: unknown): HarnessError {
   if (
     err instanceof ScenarioStepError ||
     err instanceof ScenarioLoadError ||
-    err instanceof ScriptExhaustedError
+    err instanceof ScriptExhaustedError ||
+    err instanceof LiveBudgetExhaustedError
   ) {
     return { name: err.name, message: err.message };
   }
@@ -85,6 +120,8 @@ function harnessErrorOf(err: unknown): HarnessError {
 export interface ScenarioOutcome {
   readonly scenario: Scenario;
   readonly source: ScenarioSource;
+  /** Which live pass produced this outcome, 0-indexed. Always 0 in hostile mode. */
+  readonly run: number;
   /** null iff `error` is not null. */
   readonly observation: Observation | null;
   /** Empty iff `error` is not null. */
@@ -95,33 +132,46 @@ export interface ScenarioOutcome {
 }
 
 export interface SuiteResult {
-  readonly mode: "hostile";
+  readonly mode: "hostile" | "live";
   readonly corpusDir: string;
   readonly startedAt: Date;
   readonly durationMs: number;
   readonly outcomes: readonly ScenarioOutcome[];
   /** Recorded so a report can name the seed and generator version; null when no fuzz layer ran. */
   readonly fuzz: FuzzRunInfo | null;
+  /** True iff `stopBefore` ever tripped before every entry ran. */
+  readonly stoppedEarly: boolean;
+  /** Count of entries never run because `stopBefore` had already tripped. */
+  readonly skipped: number;
 }
 
 export interface RunSuiteOptions {
-  readonly mode: "hostile";
+  readonly mode: "hostile" | "live";
   readonly corpusDir: string;
   readonly now?: () => Date;
   readonly fuzz?: FuzzRunInfo;
+  /** Live mode only: replaces every entry's own `llm` client outright. */
+  readonly llm?: LlmClient;
+  /** Consulted before each entry; true stops the suite (see `livePasses`'s header for why that leaves breadth-first coverage under a budget). */
+  readonly stopBefore?: () => boolean;
 }
 
-async function runOne({
-  scenario,
-  source,
-}: SuiteEntry): Promise<ScenarioOutcome> {
+async function runOne(
+  { scenario, source, run }: SuiteEntry,
+  llm: LlmClient | undefined,
+): Promise<ScenarioOutcome> {
+  const runIndex = run ?? 0;
   const t0 = performance.now();
   try {
-    const observation = await runCorpusScenario(scenario);
+    const observation = await runCorpusScenario(
+      scenario,
+      llm === undefined ? {} : { llm },
+    );
     const invariants = checkInvariants(observation);
     return {
       scenario,
       source,
+      run: runIndex,
       observation,
       invariants,
       expectationFailures: checkExpectations(scenario, observation, invariants),
@@ -133,6 +183,7 @@ async function runOne({
     return {
       scenario,
       source,
+      run: runIndex,
       observation: null,
       invariants: [],
       expectationFailures: [],
@@ -150,8 +201,15 @@ export async function runSuite(
   const startedAt = now();
   const t0 = performance.now();
   const outcomes: ScenarioOutcome[] = [];
+  let stoppedEarly = false;
+  let skipped = 0;
   for (const entry of entries) {
-    outcomes.push(await runOne(entry));
+    if (opts.stopBefore?.() === true) {
+      stoppedEarly = true;
+      skipped += 1;
+      continue;
+    }
+    outcomes.push(await runOne(entry, opts.llm));
   }
   return {
     mode: opts.mode,
@@ -160,5 +218,7 @@ export async function runSuite(
     durationMs: performance.now() - t0,
     outcomes,
     fuzz: opts.fuzz ?? null,
+    stoppedEarly,
+    skipped,
   };
 }

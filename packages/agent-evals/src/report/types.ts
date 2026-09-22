@@ -1,5 +1,5 @@
 /**
- * Report shapes (`schemaVersion` 2) and the Zod schema used to parse an
+ * Report shapes (`schemaVersion` 3) and the Zod schema used to parse an
  * UNTRUSTED baseline file back in. The interfaces and the schema mirror each
  * other 1:1; `parseReport` is the only reader.
  *
@@ -8,9 +8,21 @@
  * `proposal.reasoning`, `policyVerdict.detail`, any HTTP body, or scenario
  * `text`/`description`. `merchantId` IS included (it is evidence) and is
  * model-controlled, so the Markdown renderer sanitizes it.
+ *
+ * `schemaVersion` bumped 2 -> 3 for live mode (step 7): `mode` widens to
+ * `"hostile" | "live"`, `ScenarioReport` gains `run` (always 0 in hostile —
+ * k>1 duplicates a scenario id once per live pass), and `EvalReport` gains
+ * `live` (null in hostile mode). This INVALIDATES every existing v2 baseline
+ * — `EvalReportSchema`'s `schemaVersion: z.literal(3)` makes `parseReport`
+ * return `null` for one, same as any other schema mismatch, which
+ * `cli.ts`/`write.ts` already degrade to "no diff" plus one stderr warning
+ * (see `readBaseline`'s header). `live.model` is env-controlled
+ * (`ANTHROPIC_MODEL`) and therefore untrusted like any other evidence field —
+ * the Markdown renderer must run it through `cell()`, same as `merchantId`.
  */
 import { z } from "zod";
 import type { HarnessError } from "../eval-run.js";
+import type { LiveMetrics } from "../live/metrics.js";
 import type { Metrics } from "../metrics.js";
 import type { InvariantId } from "../oracles/index.js";
 
@@ -80,6 +92,8 @@ export interface ScenarioReport {
   readonly id: string;
   readonly category: string;
   readonly source: EvidenceSource;
+  /** Which live pass this is, 0-indexed. Always 0 in hostile mode; k>1 duplicates a scenario id once per pass (see `diff.ts`'s fold). */
+  readonly run: number;
   /** No violations, no expectation failures, no harness error. */
   readonly ok: boolean;
   readonly durationMs: number;
@@ -98,9 +112,27 @@ export interface ScenarioReport {
   readonly error: HarnessError | null;
 }
 
+/** Live-only run metadata (step 7). `null` for a hostile report. */
+export interface LiveReportBlock {
+  /** `ANTHROPIC_MODEL`, env-controlled and therefore untrusted — sanitize with `cell()` in Markdown. */
+  readonly model: string;
+  readonly k: number;
+  readonly maxCalls: number;
+  readonly calls: number;
+  /** `LlmClientError.code` (or `"other"`) -> count. Never a message or a vendor body — see `BudgetedLlmClient`'s header. */
+  readonly failuresByCode: Readonly<Record<string, number>>;
+  /** True iff the call budget was exhausted before every planned entry ran. */
+  readonly stoppedEarly: boolean;
+  /** Total (scenario, run) entries planned: corpus scenarios × k, before any budget stop. */
+  readonly scenariosPlanned: number;
+  /** Entries that actually executed: `scenariosPlanned - skipped` (`SuiteResult.skipped`). */
+  readonly scenariosRun: number;
+  readonly metrics: LiveMetrics;
+}
+
 export interface EvalReport {
-  readonly schemaVersion: 2;
-  readonly mode: "hostile";
+  readonly schemaVersion: 3;
+  readonly mode: "hostile" | "live";
   /** ISO UTC. */
   readonly startedAt: string;
   readonly durationMs: number;
@@ -128,6 +160,8 @@ export interface EvalReport {
     readonly file: string;
     readonly startedAt: string;
   } | null;
+  /** null in hostile mode. */
+  readonly live: LiveReportBlock | null;
 }
 
 const InvariantIdSchema = z.enum([
@@ -246,9 +280,30 @@ const EvidenceSchema = z.object({
   ),
 });
 
+const LiveMetricsSchema = z.object({
+  unsafeProposalRate: RateSchema,
+  gatedRate: RateSchema,
+  consistency: RateSchema,
+  passAtK: RateSchema,
+});
+
+const LiveReportSchema = z
+  .object({
+    model: z.string(),
+    k: z.number(),
+    maxCalls: z.number(),
+    calls: z.number(),
+    failuresByCode: z.record(z.string(), z.number()),
+    stoppedEarly: z.boolean(),
+    scenariosPlanned: z.number(),
+    scenariosRun: z.number(),
+    metrics: LiveMetricsSchema,
+  })
+  .nullable();
+
 export const EvalReportSchema = z.object({
-  schemaVersion: z.literal(2),
-  mode: z.literal("hostile"),
+  schemaVersion: z.literal(3),
+  mode: z.enum(["hostile", "live"]),
   startedAt: z.string(),
   durationMs: z.number(),
   corpus: z.object({ dir: z.string(), scenarios: z.number() }),
@@ -274,6 +329,7 @@ export const EvalReportSchema = z.object({
       id: z.string(),
       category: z.string(),
       source: EvidenceSourceSchema,
+      run: z.number(),
       ok: z.boolean(),
       durationMs: z.number(),
       safetyViolations: z.number(),
@@ -305,6 +361,7 @@ export const EvalReportSchema = z.object({
     }),
   ),
   baseline: z.object({ file: z.string(), startedAt: z.string() }).nullable(),
+  live: LiveReportSchema,
 });
 
 /** Untrusted JSON in, a typed report or null out. Never throws. */

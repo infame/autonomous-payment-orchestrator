@@ -1,6 +1,20 @@
-/** Pure previous x current -> ReportDiff. */
+/**
+ * Pure previous x current -> ReportDiff.
+ *
+ * `EvalReport.scenarios` carries one entry per (scenario, run) pair — in a
+ * live report with k>1 that DUPLICATES scenario ids (`ScenarioReport.run`
+ * disambiguates within one report, but a diff compares by id across two
+ * reports). `foldScenarios` collapses those duplicates back to one entry per
+ * id with `ok` ANDed across every run, before either scenario is compared —
+ * a scenario is "still ok" here only if every one of its k runs was.
+ */
 import type { InvariantId } from "../oracles/index.js";
 import type { EvalReport } from "./types.js";
+
+interface FoldedScenario {
+  readonly id: string;
+  readonly ok: boolean;
+}
 
 export interface ViolationKey {
   readonly scenarioId: string;
@@ -27,7 +41,7 @@ export interface ReportDiff {
 
 function metricValues(r: EvalReport): readonly [string, number | null][] {
   const m = r.metrics;
-  return [
+  const base: [string, number | null][] = [
     ["scenarios", m.scenarios],
     ["errors", m.errors],
     ["safetyViolations", m.safetyViolations],
@@ -38,6 +52,22 @@ function metricValues(r: EvalReport): readonly [string, number | null][] {
     ["guardrailCatchRate", m.guardrailCatchRate?.value ?? null],
     ["falseRejectRate", m.falseRejectRate?.value ?? null],
     ["clarifyRate", m.clarifyRate?.value ?? null],
+  ];
+  if (r.live === null) return base;
+  return [
+    ...base,
+    ["live.k", r.live.k],
+    ["live.calls", r.live.calls],
+    ["live.maxCalls", r.live.maxCalls],
+    ["live.scenariosPlanned", r.live.scenariosPlanned],
+    ["live.scenariosRun", r.live.scenariosRun],
+    [
+      "live.unsafeProposalRate",
+      r.live.metrics.unsafeProposalRate?.value ?? null,
+    ],
+    ["live.gatedRate", r.live.metrics.gatedRate?.value ?? null],
+    ["live.consistency", r.live.metrics.consistency?.value ?? null],
+    ["live.passAtK", r.live.metrics.passAtK?.value ?? null],
   ];
 }
 
@@ -52,6 +82,21 @@ function keysOf(r: EvalReport): Map<string, ViolationKey> {
   return out;
 }
 
+/** Collapses one entry per (scenario, run) down to one per scenario id, `ok` ANDed across every run — see file header. */
+function foldScenarios(
+  scenarios: EvalReport["scenarios"],
+): Map<string, FoldedScenario> {
+  const out = new Map<string, FoldedScenario>();
+  for (const s of scenarios) {
+    const existing = out.get(s.id);
+    out.set(s.id, {
+      id: s.id,
+      ok: existing === undefined ? s.ok : existing.ok && s.ok,
+    });
+  }
+  return out;
+}
+
 export function diffReports(
   previous: EvalReport,
   current: EvalReport,
@@ -59,8 +104,8 @@ export function diffReports(
   const before = new Map(metricValues(previous));
   const prevKeys = keysOf(previous);
   const curKeys = keysOf(current);
-  const prevScenarios = new Map(previous.scenarios.map((s) => [s.id, s]));
-  const curScenarios = new Map(current.scenarios.map((s) => [s.id, s]));
+  const prevScenarios = foldScenarios(previous.scenarios);
+  const curScenarios = foldScenarios(current.scenarios);
   const newlyFailing: string[] = [];
   const newlyPassing: string[] = [];
   for (const [id, cur] of curScenarios) {

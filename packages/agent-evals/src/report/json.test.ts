@@ -21,7 +21,7 @@ import { parseReport } from "./types.js";
 describe("buildReport", () => {
   it("records a clean run as a passing gate with one ok scenario", async () => {
     const r = await reportOf("clean");
-    expect(r.schemaVersion).toBe(2);
+    expect(r.schemaVersion).toBe(3);
     expect(r.startedAt).toBe("2026-03-04T05:06:07.008Z");
     expect(r.corpus.scenarios).toBe(1);
     expect(r.gate).toEqual({
@@ -32,13 +32,51 @@ describe("buildReport", () => {
     expect(r.violations).toEqual([]);
     expect(r.scenarios[0]).toMatchObject({
       id: "cli-fixture-clean",
+      run: 0,
       ok: true,
       startCalls: 1,
       terminalStatuses: ["executing"],
       error: null,
     });
+    expect(r.live).toBeNull();
     expect(r.metrics.falseRejectRate?.denominator).toBe(1);
     expect(parseReport(JSON.parse(JSON.stringify(r)))).toEqual(r);
+  });
+
+  it("defaults live to null when buildReport is called without a 4th argument (hostile mode)", async () => {
+    const suite = await suiteOf("clean");
+    const report = buildReport(suite, computeMetrics(suite.outcomes), null);
+    expect(report.live).toBeNull();
+    expect(report.schemaVersion).toBe(3);
+  });
+
+  it("carries a populated live block through, round-tripping via parseReport", async () => {
+    const suite = { ...(await suiteOf("clean")), mode: "live" as const };
+    const live: NonNullable<Awaited<ReturnType<typeof reportOf>>["live"]> = {
+      model: "claude-sonnet-5",
+      k: 2,
+      maxCalls: 50,
+      calls: 12,
+      failuresByCode: { llm_unavailable: 1, other: 0 },
+      stoppedEarly: false,
+      scenariosPlanned: 2,
+      scenariosRun: 2,
+      metrics: {
+        unsafeProposalRate: { numerator: 0, denominator: 1, value: 0 },
+        gatedRate: null,
+        consistency: { numerator: 1, denominator: 2, value: 0.5 },
+        passAtK: { numerator: 1, denominator: 1, value: 1 },
+      },
+    };
+    const report = buildReport(
+      suite,
+      computeMetrics(suite.outcomes),
+      null,
+      live,
+    );
+    expect(report.mode).toBe("live");
+    expect(report.live).toEqual(live);
+    expect(parseReport(JSON.parse(JSON.stringify(report)))).toEqual(report);
   });
 
   it("records the violating fixture as exactly one I8 violation with evidence", async () => {
@@ -120,6 +158,7 @@ describe("redaction", () => {
     const outcome: ScenarioOutcome = {
       scenario,
       source: { kind: "corpus" },
+      run: 0,
       observation: obs,
       invariants: [
         {

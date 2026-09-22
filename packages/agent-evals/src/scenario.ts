@@ -3,7 +3,11 @@
  * domain constructors in llm/proposal-from-json.ts gate scripted proposals and
  * are run eagerly at load so a bad proposal fails at LOAD, not at run.
  * Category "fuzz" marks generated scenarios (src/fuzz) and is rejected in a
- * corpus file. `llm.mode: "live"` is deliberately absent: live mode arrives with the CLI.
+ * corpus file. `llm.mode: "live"` is deliberately absent: live mode (`--mode
+ * live` on the CLI, step 7) replays the whole scenario through a real LLM
+ * client instead, REPLACING this field's value outright rather than reading
+ * a per-scenario mode — see `docs/adr/0018-live-evals-replay-the-hostile-corpus.md`
+ * and `cli.ts`'s "live" doc section for why.
  * `description` is prose for reports/reviewers and is never read by the
  * harness. `expect.coreCalls` counts `startPaymentWorkflow` calls only
  * (`getRunStatus` is excluded).

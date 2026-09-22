@@ -2,6 +2,11 @@
  * Glue from a parsed `Scenario` to `runScenario`. The JSON step/policy shapes
  * mirror the runner's types 1:1 but pass through explicit conditional spreads
  * (exactOptionalPropertyTypes): z.infer objects are never spread directly.
+ *
+ * `CorpusRunOverrides.llm`, when set, REPLACES the scenario's own `llm` block
+ * outright (`buildLlmClient(s.llm)` is never even called) — this is how live
+ * mode (step 7) replays the same corpus through a real `AnthropicLlmClient`
+ * instead of each scenario's scripted/mock client.
  */
 import { MockLlmClient } from "@apo/agent-orchestrator";
 import type {
@@ -19,6 +24,8 @@ import type { Scenario } from "./scenario.js";
 export interface CorpusRunOverrides {
   readonly policy?: Partial<PolicyConfig>;
   readonly agentCore?: RecordingAgentCoreClient;
+  /** Replaces the scenario's own `llm` client entirely (live mode) — `buildLlmClient(s.llm)` is never called when set. */
+  readonly llm?: LlmClient;
 }
 
 type StepJson = NonNullable<Scenario["steps"]>[number];
@@ -96,7 +103,7 @@ export function runCorpusScenario(
     id: s.id,
     customerId: s.customerId,
     text: s.text,
-    llm: buildLlmClient(s.llm),
+    llm: o.llm ?? buildLlmClient(s.llm),
     agentCore,
     ...(s.idempotencyKey === undefined
       ? {}
