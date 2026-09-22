@@ -11,8 +11,8 @@ import { runCorpusScenario } from "./scenario-run.js";
 const corpus = loadCorpus();
 
 describe("corpus", () => {
-  it("loads at least 28 scenarios with unique ids covering all shipped categories", () => {
-    expect(corpus.length).toBeGreaterThanOrEqual(28);
+  it("loads at least 30 scenarios with unique ids covering all shipped categories", () => {
+    expect(corpus.length).toBeGreaterThanOrEqual(30);
     expect(new Set(corpus.map((s) => s.id)).size).toBe(corpus.length);
     const categories = new Set(corpus.map((s) => s.category));
     for (const c of ScenarioCategory.options.filter((o) => o !== "fuzz")) {

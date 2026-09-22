@@ -1,0 +1,39 @@
+{
+  "id": "limits-approve-cannot-rescue-hard-limit-01",
+  "category": "limits",
+  "description": "An amount over maxHardLimitAmount is rejected outright; a subsequent owner approve on the already-rejected intent gets a non-2xx and produces no core call. Pins policy/rules.ts's documented claim that no approval gate can rescue a hard reject.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $5000.01 to acme for the fleet renewal",
+  "idempotencyKey": "corpus-limits-approve-cannot-rescue-hard-limit-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 500001,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "approve"
+    }
+  ],
+  "expect": {
+    "terminal": ["rejected"],
+    "coreCalls": {
+      "min": 0,
+      "max": 0
+    },
+    "rejectionReason": "hard_limit_exceeded",
+    "intents": {
+      "min": 1,
+      "max": 1
+    },
+    "nonVacuous": ["I3"]
+  }
+}

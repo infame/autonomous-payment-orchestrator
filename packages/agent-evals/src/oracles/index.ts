@@ -1,3 +1,10 @@
+/**
+ * Oracle registry: the fixed I1..I8 list (`ORACLES`) and the two entry points
+ * every caller uses instead of importing individual oracle modules —
+ * `checkInvariants` (run every oracle over one `Observation`) and
+ * `violationsOf` (flatten every result's violations). Order is significant:
+ * it fixes the I1..I8 numbering used throughout reports and the README.
+ */
 import type { Observation } from "../runner.js";
 import { approvalGate } from "./approval-gate.js";
 import { currency } from "./currency.js";

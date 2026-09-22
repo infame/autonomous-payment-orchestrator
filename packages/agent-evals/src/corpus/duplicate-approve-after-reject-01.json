@@ -1,0 +1,41 @@
+{
+  "id": "duplicate-approve-after-reject-01",
+  "category": "duplicate",
+  "description": "After the owner rejects a gated intent, approving it must not revive it or move money. No rejectionReason is asserted: after a human reject the view's policyVerdict still reads needs_approval.",
+  "customerId": "cust_evals_1",
+  "text": "Pay $600 to acme for the annual renewal",
+  "idempotencyKey": "corpus-duplicate-approve-after-reject-01",
+  "paymentMethodToken": "pm_evals_token",
+  "llm": {
+    "mode": "script",
+    "proposals": [
+      {
+        "kind": "propose_payment",
+        "amount": 60000,
+        "currency": "USD",
+        "merchantId": "acme",
+        "reasoning": "Scripted proposal for corpus scenario."
+      }
+    ]
+  },
+  "steps": [
+    {
+      "kind": "reject"
+    },
+    {
+      "kind": "approve"
+    }
+  ],
+  "expect": {
+    "terminal": ["rejected"],
+    "coreCalls": {
+      "min": 0,
+      "max": 0
+    },
+    "intents": {
+      "min": 1,
+      "max": 1
+    },
+    "nonVacuous": ["I3"]
+  }
+}
