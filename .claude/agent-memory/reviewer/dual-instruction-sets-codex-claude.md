@@ -55,3 +55,19 @@ relaxed in the other; nothing tests prose.
   here is `git@github.com:...`. If Codex ever honours this file, check push/fetch.
   Its `[shell_environment_policy.set] CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` only
   reaches child shells; it is *not* the twin of `.claude/settings.json`'s `env`.
+
+**Package review cadence (f2b943e Codex / 8ad551a Claude, 2026-09-22).** Both sides
+now defer final test-runner + both reviewers to the *complete package's frozen
+diff*, with an intermediate review only for a plan-named critical boundary. Known
+asymmetries to re-check if either side is touched again:
+- Codex `AGENTS.md` carries an evidence contract ("Evidence records `headSha`,
+  `command`, `result`; reuse only when covered content and environment are
+  unchanged"). Claude's `.claude/skills/feature/SKILL.md` says "reusing valid step
+  evidence" with no such conditions, and `.claude/agents/test-runner.md` has no
+  evidence concept at all.
+- Codex says "After three *final* review rounds"; Claude's Stage 3 still says "Max 3
+  review rounds **total**", so an intermediate boundary round may be read as eating
+  the final budget.
+- Claude's Stage 4 has no "package incomplete → stop, don't offer the merge command"
+  exit; Codex step 5 ("otherwise report readiness") does. Backstop is the
+  approve.sh/`reference-transaction` gate, so these stay warnings.
