@@ -28,7 +28,20 @@ export const AppConfig = z
     // message echoes the received value verbatim.
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
     ANTHROPIC_MODEL: z.string().min(1).default("claude-sonnet-5"),
-    ANTHROPIC_BASE_URL: z.string().url().optional(),
+    ANTHROPIC_BASE_URL: z
+      .string()
+      .url()
+      .refine(
+        (value) => {
+          try {
+            return new URL(value).protocol === "https:";
+          } catch {
+            return false;
+          }
+        },
+        { message: "must be an HTTPS URL" },
+      )
+      .optional(),
     // Same FOO=""->0 trap as POLICY_DAILY_RATE_LIMIT below (an env var set
     // but left empty does NOT trigger `.optional()`'s undefined-only
     // fallback, and z.coerce.number() turns "" into 0) — but here 0 is a

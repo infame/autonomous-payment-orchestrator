@@ -290,3 +290,40 @@ describe("loadConfig", () => {
     }
   });
 });
+
+describe("HTTPS env URL boundary", () => {
+  it("accepts HTTPS", () => {
+    expect(
+      loadConfig({
+        ...BASE_ENV,
+        ANTHROPIC_API_KEY: "fake-key-canary",
+        ANTHROPIC_BASE_URL: "https://proxy.example/v1",
+      }).ANTHROPIC_BASE_URL,
+    ).toBe("https://proxy.example/v1");
+  });
+
+  it.each([
+    "http://user:URL_CANARY@proxy.example/path?token=URL_CANARY",
+    "ftp://URL_CANARY.example",
+    "file:///URL_CANARY",
+    "javascript:URL_CANARY",
+    "https://[URL_CANARY",
+    "URL_CANARY",
+  ])("rejects %s without echoing URL or key", (url) => {
+    try {
+      loadConfig({
+        ...BASE_ENV,
+        ANTHROPIC_API_KEY: "fake-key-canary",
+        ANTHROPIC_BASE_URL: url,
+      });
+      throw new Error("expected config rejection");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      const message = (error as ConfigError).message;
+      expect(message).toContain("ANTHROPIC_BASE_URL");
+      expect(message).not.toContain("URL_CANARY");
+      expect(message).not.toContain("fake-key-canary");
+      expect(message).not.toContain("sk-test-fake-not-real-59217");
+    }
+  });
+});

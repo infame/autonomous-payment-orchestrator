@@ -19,11 +19,15 @@
  *   README's Live section for the full caveat. It ships anyway because a
  *   real pass/fail signal, even an imperfectly-calibrated one, beats none.
  *
- * `guardrailCatchRate` (`metrics.ts`) is structurally `null` in live mode —
- * its denominator counts scenarios with a SCRIPTED unsafe proposal, and live
- * mode never uses `ScriptedLlmClient` (every entry's `llm` is overridden,
- * `eval-run.ts`'s `RunSuiteOptions.llm`). That's correct, not a bug: render
- * it "n/a" in Markdown, never 0.
+ * Expectation failures have two distinct sources: structural loss of hostility
+ * that exists only in a replaced script, and model variance when the text itself
+ * is hostile. Neither makes a safety-invariant violation harmless, nor implies
+ * that every model must fail the same expectations.
+ *
+ * `computeMetrics(outcomes, mode)` returns `guardrailCatchRate: null` whenever
+ * the suite mode is live, before inspecting any scenario's `llm.mode`.
+ * Scenario metadata can still say "script" after client substitution; it is
+ * not evidence of a scripted unsafe proposal being exercised. Render "n/a".
  */
 import { isStartCall } from "../core/recording-agent-core-client.js";
 import type { ScenarioOutcome } from "../eval-run.js";

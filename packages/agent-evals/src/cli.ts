@@ -70,7 +70,12 @@ import {
 import { computeLiveMetrics } from "./live/metrics.js";
 import { createLiveLlmClient } from "./live/llm-factory.js";
 import type { LiveLlm } from "./live/llm-factory.js";
-import { ConfigError, loadLiveConfig } from "./live-config.js";
+import {
+  ConfigError,
+  loadLiveConfig,
+  MAX_K,
+  MAX_LIVE_CALLS_CEILING,
+} from "./live-config.js";
 import type { LiveConfig } from "./live-config.js";
 import { computeMetrics } from "./metrics.js";
 import { diffReports } from "./report/diff.js";
@@ -122,8 +127,8 @@ eval:hostile-only options:
   --dump-fuzz <dir>   Write each generated scenario to <dir>/<id>.json
 
 eval:live-only options (fuzz is not supported in live mode):
-  --k <n>           Passes per scenario, overrides EVAL_LIVE_K (default 1)
-  --max-calls <n>   Hard ceiling on real LLM calls, overrides MAX_LIVE_CALLS (default 100)
+  --k <n>           Passes per scenario, overrides EVAL_LIVE_K (default 1, max ${String(MAX_K)})
+  --max-calls <n>   Hard ceiling on real LLM calls, overrides MAX_LIVE_CALLS (default 100, max ${String(MAX_LIVE_CALLS_CEILING)})
   --category <c>    Only run scenarios in this category
   --only <ids>      Only run these scenario ids, comma-separated
 
@@ -324,7 +329,7 @@ async function runHostile(
           },
         }),
   });
-  const metrics = computeMetrics(suite.outcomes, "hostile");
+  const metrics = computeMetrics(suite.outcomes, suite.mode);
   const report = buildReport(
     suite,
     metrics,
@@ -400,13 +405,22 @@ async function runLive(
   }
 
   const rawK = values.k;
-  if (rawK !== undefined && !isPositiveIntString(rawK)) {
-    deps.stderr(`${prefix}: --k must be a positive integer`);
+  if (
+    rawK !== undefined &&
+    (!isPositiveIntString(rawK) || Number(rawK) > MAX_K)
+  ) {
+    deps.stderr(`${prefix}: --k must be an integer from 1 to ${String(MAX_K)}`);
     return EXIT.harnessError;
   }
   const rawMaxCalls = values["max-calls"];
-  if (rawMaxCalls !== undefined && !isPositiveIntString(rawMaxCalls)) {
-    deps.stderr(`${prefix}: --max-calls must be a positive integer`);
+  if (
+    rawMaxCalls !== undefined &&
+    (!isPositiveIntString(rawMaxCalls) ||
+      Number(rawMaxCalls) > MAX_LIVE_CALLS_CEILING)
+  ) {
+    deps.stderr(
+      `${prefix}: --max-calls must be an integer from 1 to ${String(MAX_LIVE_CALLS_CEILING)}`,
+    );
     return EXIT.harnessError;
   }
 
@@ -466,7 +480,7 @@ async function runLive(
     llm: live.client,
     stopBefore: () => live.budget.exhausted,
   });
-  const metrics = computeMetrics(suite.outcomes, "live");
+  const metrics = computeMetrics(suite.outcomes, suite.mode);
   const liveMetrics = computeLiveMetrics(suite.outcomes, k);
   const report = buildReport(
     suite,

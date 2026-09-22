@@ -6,9 +6,15 @@
  * is never exercised here. Every "key" value used is a synthetic, obviously
  * fake string, never read from the real process environment.
  */
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { clarifyProposal, paymentProposal } from "@apo/agent-orchestrator";
 import type {
@@ -19,6 +25,7 @@ import type {
 import { EXIT, runCli } from "./cli.js";
 import type { CliDeps } from "./cli.js";
 import { BudgetedLlmClient } from "./llm/budgeted-llm-client.js";
+import { MAX_K, MAX_LIVE_CALLS_CEILING } from "./live-config.js";
 import type { LiveConfig } from "./live-config.js";
 import type { LiveLlm } from "./live/llm-factory.js";
 import { fixtureDir } from "./report/test-support.js";
@@ -469,4 +476,159 @@ describe("runCli --help", () => {
       expect(text).toContain(flag);
     }
   });
+});
+
+describe("live validation before construction", () => {
+  it.each([
+    ["--k", "EVAL_LIVE_K", MAX_K],
+    ["--max-calls", "MAX_LIVE_CALLS", MAX_LIVE_CALLS_CEILING],
+  ] as const)(
+    "%s validates env and flags before any factory call",
+    async (flag, field, ceiling) => {
+      for (const value of [
+        "",
+        "0",
+        "-1",
+        "1.5",
+        "abc",
+        "NaN",
+        "Infinity",
+        String(ceiling + 1),
+        "9007199254740992",
+      ]) {
+        for (const source of ["flag", "env"] as const) {
+          const out = tmp();
+          const h = harness({
+            ANTHROPIC_API_KEY: FAKE_KEY,
+            ...(source === "env" ? { [field]: value } : {}),
+          });
+          const code = await runCli(
+            [
+              "--mode",
+              "live",
+              "--corpus",
+              "/does-not-exist",
+              "--out",
+              out,
+              flag,
+              source === "flag" ? value : "1",
+            ],
+            h.deps,
+          );
+          expect(code).toBe(EXIT.harnessError);
+          expect(h.err.join("\n")).toContain(source === "flag" ? flag : field);
+          expect(h.factoryCalls).toHaveLength(0);
+          expect(readdirSync(out)).toEqual([]);
+        }
+      }
+    },
+  );
+
+  it.each([1, MAX_K])(
+    "accepts k=%i and inclusive call ceiling with a fake client",
+    async (k) => {
+      const out = tmp();
+      const h = harness({ ANTHROPIC_API_KEY: FAKE_KEY });
+      expect(
+        await runCli(
+          [
+            "--mode",
+            "live",
+            "--corpus",
+            writeCorpus(["s1"]),
+            "--out",
+            out,
+            "--k",
+            String(k),
+            "--max-calls",
+            String(MAX_LIVE_CALLS_CEILING),
+          ],
+          h.deps,
+        ),
+      ).toBe(EXIT.ok);
+      const report = readReport(out);
+      expect(report.live?.k).toBe(k);
+      expect(report.scenarios).toHaveLength(k);
+      expect(h.factoryCalls[0]?.maxCalls).toBe(MAX_LIVE_CALLS_CEILING);
+    },
+  );
+
+  it.each([
+    "http://URL_CANARY.example",
+    "https://[URL_CANARY",
+    "file:///URL_CANARY",
+  ])("rejects URL before factory and redacts diagnostics: %s", async (url) => {
+    const out = tmp();
+    const h = harness({ ANTHROPIC_API_KEY: FAKE_KEY, ANTHROPIC_BASE_URL: url });
+    expect(await runCli(["--mode", "live", "--out", out], h.deps)).toBe(
+      EXIT.harnessError,
+    );
+    expect(h.factoryCalls).toHaveLength(0);
+    expect(readdirSync(out)).toEqual([]);
+    expect(h.err.join("\n")).toContain("ANTHROPIC_BASE_URL");
+    expect([...h.err, ...h.out].join("\n")).not.toContain("URL_CANARY");
+    expect([...h.err, ...h.out].join("\n")).not.toContain(FAKE_KEY);
+  });
+});
+
+describe("baseline paths through both CLI modes", () => {
+  for (const mode of ["hostile", "live"] as const) {
+    for (const selection of ["explicit", "auto"] as const) {
+      it.each(["inside", "outside"] as const)(
+        mode +
+          " " +
+          selection +
+          " baseline %s cwd is relative in JSON and Markdown",
+        async (location) => {
+          const root = tmp();
+          const cwd = join(root, "cwd");
+          mkdirSync(cwd);
+          const out = join(location === "inside" ? cwd : root, "reports");
+          const args = [
+            "--mode",
+            mode,
+            "--corpus",
+            fixtureDir("clean"),
+            "--out",
+            out,
+            "--fuzz-count",
+            "0",
+          ];
+          const first = harness(
+            { ANTHROPIC_API_KEY: FAKE_KEY },
+            new Date("2026-01-01T00:00:00Z"),
+          );
+          expect(await runCli(args, { ...first.deps, cwd })).toBe(EXIT.ok);
+          const baseline = join(out, reports(out).json[0] ?? "");
+          const second = harness(
+            { ANTHROPIC_API_KEY: FAKE_KEY },
+            new Date("2026-01-02T00:00:00Z"),
+          );
+          expect(
+            await runCli(
+              [
+                ...args,
+                ...(selection === "explicit"
+                  ? ["--baseline", relative(cwd, baseline)]
+                  : []),
+              ],
+              { ...second.deps, cwd },
+            ),
+          ).toBe(EXIT.ok);
+          const latest = reports(out).json.at(-1);
+          const markdown = reports(out).md.at(-1);
+          if (latest === undefined || markdown === undefined)
+            throw new Error("missing reports");
+          const json = readFileSync(join(out, latest), "utf8");
+          const report = parseReport(JSON.parse(json));
+          const md = readFileSync(join(out, markdown), "utf8");
+          expect(report?.baseline?.file).toBe(relative(cwd, baseline));
+          expect(md).toContain(relative(cwd, baseline));
+          expect(json).not.toContain(baseline);
+          expect(md).not.toContain(baseline);
+          expect(second.err).toEqual([]);
+        },
+      );
+    }
+  }
 });

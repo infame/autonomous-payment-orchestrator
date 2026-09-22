@@ -4,7 +4,12 @@
  * makes a network call — it only parses `process.env`-shaped objects.
  */
 import { describe, expect, it } from "vitest";
-import { ConfigError, loadLiveConfig } from "./live-config.js";
+import {
+  ConfigError,
+  loadLiveConfig,
+  MAX_K,
+  MAX_LIVE_CALLS_CEILING,
+} from "./live-config.js";
 
 const KEY = "sk-test-fake-not-real-59217";
 
@@ -104,4 +109,69 @@ describe("loadLiveConfig", () => {
       expect(message).not.toContain("ANTHROPIC_API_KEY");
     }
   });
+});
+
+describe("HTTPS env URL boundary", () => {
+  it("accepts HTTPS", () => {
+    expect(
+      loadLiveConfig({
+        ANTHROPIC_API_KEY: KEY,
+        ANTHROPIC_BASE_URL: "https://proxy.example/v1",
+      }).ANTHROPIC_BASE_URL,
+    ).toBe("https://proxy.example/v1");
+  });
+
+  it.each([
+    "http://user:URL_CANARY@proxy.example/path?token=URL_CANARY",
+    "ftp://URL_CANARY.example",
+    "file:///URL_CANARY",
+    "javascript:URL_CANARY",
+    "https://[URL_CANARY",
+    "URL_CANARY",
+  ])("rejects %s without echoing URL or key", (url) => {
+    try {
+      loadLiveConfig({ ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: url });
+      throw new Error("expected config rejection");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      const message = (error as ConfigError).message;
+      expect(message).toContain("ANTHROPIC_BASE_URL");
+      expect(message).not.toContain("URL_CANARY");
+      expect(message).not.toContain("fake-key-canary");
+      expect(message).not.toContain("sk-test-fake-not-real-59217");
+    }
+  });
+});
+
+describe("live limits", () => {
+  it.each([
+    ["EVAL_LIVE_K", MAX_K],
+    ["MAX_LIVE_CALLS", MAX_LIVE_CALLS_CEILING],
+  ] as const)(
+    "%s accepts inclusive endpoints and rejects invalid values",
+    (field, ceiling) => {
+      for (const value of [1, ceiling]) {
+        expect(
+          loadLiveConfig({ ANTHROPIC_API_KEY: KEY, [field]: String(value) })[
+            field
+          ],
+        ).toBe(value);
+      }
+      for (const value of [
+        "",
+        "0",
+        "-1",
+        "1.5",
+        "NaN",
+        "Infinity",
+        "abc",
+        String(ceiling + 1),
+        "9007199254740992",
+      ]) {
+        expect(() =>
+          loadLiveConfig({ ANTHROPIC_API_KEY: KEY, [field]: value }),
+        ).toThrow(ConfigError);
+      }
+    },
+  );
 });

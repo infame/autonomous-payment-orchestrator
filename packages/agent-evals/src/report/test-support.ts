@@ -33,5 +33,7 @@ export async function reportOf(
     suite,
     computeMetrics(suite.outcomes, suite.mode),
     baseline,
+    null,
+    process.cwd(),
   );
 }

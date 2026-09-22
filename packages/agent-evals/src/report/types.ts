@@ -157,6 +157,8 @@ export interface EvalReport {
   readonly scenarios: readonly ScenarioReport[];
   readonly violations: readonly ReportedViolation[];
   readonly baseline: {
+    /** New reports use a path relative to the supplied cwd (possibly ../).
+     * Schema 3 still accepts older reports containing absolute paths. */
     readonly file: string;
     readonly startedAt: string;
   } | null;

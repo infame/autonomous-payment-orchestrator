@@ -848,6 +848,9 @@ Notable env vars beyond `DATABASE_URL`/`DURABLE_LEDGER_URL`/
   own doc comment for why both checks exist), the moment `LLM_MODE=live`.
   Never logged.
 - `ANTHROPIC_MODEL` — default `claude-sonnet-5`.
+- `ANTHROPIC_BASE_URL` — optional HTTPS URL. HTTP development proxies must migrate
+  to HTTPS for env configuration. Programmatic adapter URL options and
+  `DURABLE_LEDGER_URL` retain their existing contracts.
 - `POLICY_ALLOWED_CURRENCIES`, `POLICY_MAX_AUTO_APPROVE_AMOUNT`,
   `POLICY_MAX_HARD_LIMIT_AMOUNT`, `POLICY_DAILY_RATE_LIMIT` — see
   `config.ts` for defaults; `createAgentOrchestrator` runs them through

@@ -21,6 +21,9 @@
  */
 import { z } from "zod";
 
+export const MAX_K = 100;
+export const MAX_LIVE_CALLS_CEILING = 1000;
+
 export const LiveConfig = z
   .object({
     // Required for `--mode live` (enforced below, not by `.min(1)` alone —
@@ -35,7 +38,20 @@ export const LiveConfig = z
       })
       .optional(),
     ANTHROPIC_MODEL: z.string().min(1).default("claude-sonnet-5"),
-    ANTHROPIC_BASE_URL: z.string().url().optional(),
+    ANTHROPIC_BASE_URL: z
+      .string()
+      .url()
+      .refine(
+        (value) => {
+          try {
+            return new URL(value).protocol === "https:";
+          } catch {
+            return false;
+          }
+        },
+        { message: "must be an HTTPS URL" },
+      )
+      .optional(),
     // Same FOO=""->0 trap as config.ts's own ANTHROPIC_MAX_RETRIES: 0 is a
     // legal, meaningfully different value (no SDK-level retries at all), so
     // `.positive()` isn't available as a fix. Preprocess "" to undefined so
@@ -51,10 +67,15 @@ export const LiveConfig = z
     // `POLICY_DAILY_RATE_LIMIT` (config.ts): an env var set but left empty
     // does NOT trigger `.default()`'s undefined-only fallback, and
     // `z.coerce.number()` turns "" into 0, which `.positive()` then rejects.
-    MAX_LIVE_CALLS: z.coerce.number().int().positive().default(100),
+    MAX_LIVE_CALLS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(MAX_LIVE_CALLS_CEILING)
+      .default(100),
     // Passes per scenario. Same "" -> 0 -> rejected-by-.positive() shape as
     // MAX_LIVE_CALLS above.
-    EVAL_LIVE_K: z.coerce.number().int().positive().default(1),
+    EVAL_LIVE_K: z.coerce.number().int().positive().max(MAX_K).default(1),
   })
   .superRefine((cfg, ctx) => {
     if (cfg.ANTHROPIC_API_KEY === undefined) {

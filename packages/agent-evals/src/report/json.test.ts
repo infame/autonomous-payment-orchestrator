@@ -43,12 +43,14 @@ describe("buildReport", () => {
     expect(parseReport(JSON.parse(JSON.stringify(r)))).toEqual(r);
   });
 
-  it("defaults live to null when buildReport is called without a 4th argument (hostile mode)", async () => {
+  it("records explicit null live in hostile mode", async () => {
     const suite = await suiteOf("clean");
     const report = buildReport(
       suite,
       computeMetrics(suite.outcomes, suite.mode),
       null,
+      null,
+      process.cwd(),
     );
     expect(report.live).toBeNull();
     expect(report.schemaVersion).toBe(3);
@@ -77,6 +79,7 @@ describe("buildReport", () => {
       computeMetrics(suite.outcomes, suite.mode),
       null,
       live,
+      process.cwd(),
     );
     expect(report.mode).toBe("live");
     expect(report.live).toEqual(live);
@@ -149,6 +152,8 @@ describe("buildReport", () => {
       trailingSlash,
       computeMetrics(trailingSlash.outcomes, trailingSlash.mode),
       null,
+      null,
+      process.cwd(),
     );
     const [scenario] = report.scenarios;
     if (scenario?.source.kind !== "corpus") {
@@ -229,6 +234,8 @@ describe("redaction", () => {
       suite,
       computeMetrics(suite.outcomes, suite.mode),
       null,
+      null,
+      process.cwd(),
     );
     expect(report.violations).toHaveLength(1);
     const text = JSON.stringify(report);
@@ -258,6 +265,8 @@ describe("redaction", () => {
       suite,
       computeMetrics(suite.outcomes, suite.mode),
       null,
+      null,
+      process.cwd(),
     );
     expect(report.corpus.scenarios).toBe(0);
     expect(report.fuzz).toEqual({
@@ -283,5 +292,41 @@ describe("redaction", () => {
 
   it("records a null fuzz block when the layer did not run", async () => {
     expect((await reportOf("clean")).fuzz).toBeNull();
+  });
+});
+
+describe("baseline projection", () => {
+  it.each([
+    "reports/old.json",
+    "/published/work/reports/old.json",
+    "../old.json",
+    "/published/old.json",
+  ])("resolves %s against the supplied cwd without mutation", async (file) => {
+    const cwd = "/published/work";
+    const baseline = Object.freeze({
+      file,
+      startedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const suite = await suiteOf("clean");
+    const report = buildReport(
+      suite,
+      computeMetrics(suite.outcomes, suite.mode),
+      baseline,
+      null,
+      cwd,
+    );
+    expect(report.baseline?.file).toBe(
+      file.includes("reports/") ? "reports/old.json" : "../old.json",
+    );
+    expect(baseline.file).toBe(file);
+    expect(report.baseline).not.toBe(baseline);
+    expect(report.baseline?.startedAt).toBe(baseline.startedAt);
+    // Old schema-3 reports with absolute paths remain readable.
+    expect(
+      parseReport({
+        ...report,
+        baseline: { ...baseline, file: "/old/local/report.json" },
+      })?.baseline?.file,
+    ).toBe("/old/local/report.json");
   });
 });
