@@ -89,16 +89,15 @@ function liveLines(live: EvalReport["live"]): string[] {
       "",
     );
   }
+  const failureRows = Object.entries(live.failuresByCode).map(
+    ([code, count]) => [cell(code), String(count)],
+  );
   lines.push(
     "Failures by code:",
     "",
-    ...table(
-      ["Code", "Count"],
-      Object.entries(live.failuresByCode).map(([code, count]) => [
-        cell(code),
-        String(count),
-      ]),
-    ),
+    ...(failureRows.length === 0
+      ? ["None.", ""]
+      : table(["Code", "Count"], failureRows)),
     "Live metrics:",
     "",
     ...table(

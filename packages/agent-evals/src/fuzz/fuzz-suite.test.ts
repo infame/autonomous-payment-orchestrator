@@ -47,7 +47,7 @@ describe(`fuzz suite (seed ${DEFAULT_FUZZ_SEED}, ${String(count)} cases)`, () =>
     }
     expect(problems).toEqual([]);
 
-    const m = computeMetrics(suite.outcomes);
+    const m = computeMetrics(suite.outcomes, suite.mode);
     expect(m.scenarios).toBe(count);
     expect(m.startCalls).toBeGreaterThan(0);
     if (count >= DEFAULT_FUZZ_COUNT) expect(m.vacuousInvariants).toEqual([]);

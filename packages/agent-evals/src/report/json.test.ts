@@ -45,7 +45,11 @@ describe("buildReport", () => {
 
   it("defaults live to null when buildReport is called without a 4th argument (hostile mode)", async () => {
     const suite = await suiteOf("clean");
-    const report = buildReport(suite, computeMetrics(suite.outcomes), null);
+    const report = buildReport(
+      suite,
+      computeMetrics(suite.outcomes, suite.mode),
+      null,
+    );
     expect(report.live).toBeNull();
     expect(report.schemaVersion).toBe(3);
   });
@@ -70,7 +74,7 @@ describe("buildReport", () => {
     };
     const report = buildReport(
       suite,
-      computeMetrics(suite.outcomes),
+      computeMetrics(suite.outcomes, suite.mode),
       null,
       live,
     );
@@ -115,6 +119,43 @@ describe("buildReport", () => {
       file: "x.json",
       startedAt: "2026-01-01T00:00:00.000Z",
     });
+  });
+
+  it("relativizes corpus.dir and scenario file paths against cwd, never absolute-local — even from a cwd outside the corpus tree", async () => {
+    const suite = await suiteOf("clean");
+    const outsideCwd = "/tmp/some-other-place-entirely";
+    const report = buildReport(
+      suite,
+      computeMetrics(suite.outcomes, suite.mode),
+      null,
+      null,
+      outsideCwd,
+    );
+    expect(report.corpus.dir.startsWith("/")).toBe(false);
+    expect(report.corpus.dir).not.toContain("//");
+    const [scenario] = report.scenarios;
+    if (scenario?.source.kind !== "corpus") {
+      throw new Error("expected a corpus-sourced scenario");
+    }
+    expect(scenario.source.file.startsWith("/")).toBe(false);
+    expect(scenario.source.file).not.toContain("//");
+    expect(scenario.source.file.endsWith("cli-fixture-clean.json")).toBe(true);
+  });
+
+  it("normalizes a double slash from a trailing corpus directory argument", async () => {
+    const suite = await suiteOf("clean");
+    const trailingSlash = { ...suite, corpusDir: `${suite.corpusDir}/` };
+    const report = buildReport(
+      trailingSlash,
+      computeMetrics(trailingSlash.outcomes, trailingSlash.mode),
+      null,
+    );
+    const [scenario] = report.scenarios;
+    if (scenario?.source.kind !== "corpus") {
+      throw new Error("expected a corpus-sourced scenario");
+    }
+    expect(scenario.source.file).not.toContain("//");
+    expect(scenario.source.file.endsWith("cli-fixture-clean.json")).toBe(true);
   });
 });
 
@@ -184,7 +225,11 @@ describe("redaction", () => {
       ...(await suiteOf("clean")),
       outcomes: [outcome],
     };
-    const report = buildReport(suite, computeMetrics(suite.outcomes), null);
+    const report = buildReport(
+      suite,
+      computeMetrics(suite.outcomes, suite.mode),
+      null,
+    );
     expect(report.violations).toHaveLength(1);
     const text = JSON.stringify(report);
     for (const canary of [
@@ -209,7 +254,11 @@ describe("redaction", () => {
       corpusDir: "none",
       fuzz: { seed, count: 6, generator: FUZZ_GENERATOR_VERSION },
     });
-    const report = buildReport(suite, computeMetrics(suite.outcomes), null);
+    const report = buildReport(
+      suite,
+      computeMetrics(suite.outcomes, suite.mode),
+      null,
+    );
     expect(report.corpus.scenarios).toBe(0);
     expect(report.fuzz).toEqual({
       seed,

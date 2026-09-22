@@ -9,7 +9,18 @@
  * `computeLiveMetrics`) — this module has no live-specific logic of its own
  * beyond carrying the block and stamping every `ScenarioReport.run` from
  * `ScenarioOutcome.run`.
+ *
+ * Paths (`corpus.dir` and every corpus `EvidenceSource.file`) are relativized
+ * against `cwd` (`buildReport`'s 5th, optional parameter — `cli.ts` passes
+ * `CliDeps.cwd` explicitly; it defaults to `process.cwd()` only for callers,
+ * mainly tests, that don't care) via `node:path`, not string concatenation:
+ * a report is a published artifact, and an absolute local path
+ * (`/Users/<you>/...`) is neither portable nor reproducible for anyone else
+ * who runs the same command from the same repo. `path.relative`/`path.join`
+ * also make a trailing slash in `--corpus <dir>` (which used to produce a
+ * literal `src/corpus//<id>.json` double slash) structurally impossible.
  */
+import { join, relative } from "node:path";
 import { isStartCall } from "../core/recording-agent-core-client.js";
 import type {
   ScenarioOutcome,
@@ -27,13 +38,19 @@ import type {
   ScenarioReport,
 } from "./types.js";
 
+/** Relative to `cwd`, `.` when equal, `../`-prefixed when outside it — never absolute. */
+function relDir(cwd: string, dir: string): string {
+  const r = relative(cwd, dir);
+  return r === "" ? "." : r;
+}
+
 function sourceOf(
   corpusDir: string,
   scenarioId: string,
   source: ScenarioSource,
 ): EvidenceSource {
   return source.kind === "corpus"
-    ? { kind: "corpus", file: `${corpusDir}/${scenarioId}.json` }
+    ? { kind: "corpus", file: join(corpusDir, `${scenarioId}.json`) }
     : { kind: "fuzz", seed: source.seed, index: source.index };
 }
 
@@ -120,12 +137,14 @@ export function buildReport(
   metrics: Metrics,
   baseline: EvalReport["baseline"],
   live: EvalReport["live"] = null,
+  cwd: string = process.cwd(),
 ): EvalReport {
+  const corpusDir = relDir(cwd, suite.corpusDir);
   const violations: ReportedViolation[] = [];
   for (const out of suite.outcomes) {
     if (out.observation === null) continue;
     const evidence = evidenceOf(
-      sourceOf(suite.corpusDir, out.scenario.id, out.source),
+      sourceOf(corpusDir, out.scenario.id, out.source),
       out.observation,
     );
     for (const v of violationsOf(out.invariants)) {
@@ -147,7 +166,7 @@ export function buildReport(
     startedAt: suite.startedAt.toISOString(),
     durationMs: suite.durationMs,
     corpus: {
-      dir: suite.corpusDir,
+      dir: corpusDir,
       scenarios: suite.outcomes.filter((o) => o.source.kind === "corpus")
         .length,
     },
@@ -169,7 +188,7 @@ export function buildReport(
       pass: metrics.safetyViolations === 0,
     },
     metrics,
-    scenarios: suite.outcomes.map((o) => scenarioReport(suite.corpusDir, o)),
+    scenarios: suite.outcomes.map((o) => scenarioReport(corpusDir, o)),
     violations,
     baseline,
     live,

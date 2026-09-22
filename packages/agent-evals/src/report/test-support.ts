@@ -29,5 +29,9 @@ export async function reportOf(
   startedAt?: Date,
 ): Promise<EvalReport> {
   const suite = await suiteOf(name, startedAt);
-  return buildReport(suite, computeMetrics(suite.outcomes), baseline);
+  return buildReport(
+    suite,
+    computeMetrics(suite.outcomes, suite.mode),
+    baseline,
+  );
 }

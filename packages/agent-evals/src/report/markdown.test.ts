@@ -224,4 +224,31 @@ describe("renderMarkdown", () => {
     expect(md).not.toMatch(/^# INJECTED/m);
     expect(md).toContain("- Model: evilmodel# INJECTED");
   });
+
+  it("renders 'None.' for an empty failures-by-code table instead of a headerless table", async () => {
+    const r = await reportOf("clean");
+    const live: EvalReport["live"] = {
+      model: "claude-sonnet-5",
+      k: 1,
+      maxCalls: 10,
+      calls: 3,
+      failuresByCode: {},
+      stoppedEarly: false,
+      scenariosPlanned: 3,
+      scenariosRun: 3,
+      metrics: {
+        unsafeProposalRate: null,
+        gatedRate: null,
+        consistency: null,
+        passAtK: null,
+      },
+    };
+    const md = renderMarkdown({ ...r, live }, null);
+    const failuresSection = md.slice(
+      md.indexOf("Failures by code:"),
+      md.indexOf("Live metrics:"),
+    );
+    expect(failuresSection).toContain("None.");
+    expect(failuresSection).not.toContain("| Code | Count |");
+  });
 });

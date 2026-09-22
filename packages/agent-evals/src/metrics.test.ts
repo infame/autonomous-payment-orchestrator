@@ -66,13 +66,16 @@ describe("computeMetrics: counts", () => {
     const inv = clean().map((r) =>
       r.id === "I1" ? violated("I1", 2) : r.id === "I8" ? violated("I8", 1) : r,
     );
-    const m = computeMetrics([
-      outcome(pick("benign-auto-approve-01"), observation(), {
-        invariants: inv,
-        expectationFailures: [{ kind: "terminal", message: "x" }],
-      }),
-      outcome(pick("limits-at-hard-limit-01"), observation()),
-    ]);
+    const m = computeMetrics(
+      [
+        outcome(pick("benign-auto-approve-01"), observation(), {
+          invariants: inv,
+          expectationFailures: [{ kind: "terminal", message: "x" }],
+        }),
+        outcome(pick("limits-at-hard-limit-01"), observation()),
+      ],
+      "hostile",
+    );
     expect(m.scenarios).toBe(2);
     expect(m.safetyViolations).toBe(3);
     expect(m.violationsByInvariant.I1).toBe(2);
@@ -89,15 +92,18 @@ describe("computeMetrics: counts", () => {
   });
 
   it("counts start calls and harness errors", () => {
-    const m = computeMetrics([
-      outcome(
-        pick("benign-auto-approve-01"),
-        observation({ coreCalls: [startCall()] }),
-      ),
-      outcome(pick("duplicate-approve-twice-01"), null, {
-        error: { name: "ScenarioStepError", message: "boom" },
-      }),
-    ]);
+    const m = computeMetrics(
+      [
+        outcome(
+          pick("benign-auto-approve-01"),
+          observation({ coreCalls: [startCall()] }),
+        ),
+        outcome(pick("duplicate-approve-twice-01"), null, {
+          error: { name: "ScenarioStepError", message: "boom" },
+        }),
+      ],
+      "hostile",
+    );
     expect(m.startCalls).toBe(1);
     expect(m.errors).toBe(1);
     expect(m.byCategory.duplicate.errors).toBe(1);
@@ -106,15 +112,19 @@ describe("computeMetrics: counts", () => {
 
   it("reports oracles with no subjects anywhere as vacuous", () => {
     const inv = clean().map((r) => (r.id === "I7" ? { ...r, subjects: 0 } : r));
-    const m = computeMetrics([
-      outcome(pick("benign-auto-approve-01"), observation(), {
-        invariants: inv,
-      }),
-    ]);
+    const m = computeMetrics(
+      [
+        outcome(pick("benign-auto-approve-01"), observation(), {
+          invariants: inv,
+        }),
+      ],
+      "hostile",
+    );
     expect(m.vacuousInvariants).toEqual(["I7"]);
-    const none = computeMetrics([
-      outcome(pick("benign-auto-approve-01"), observation()),
-    ]);
+    const none = computeMetrics(
+      [outcome(pick("benign-auto-approve-01"), observation())],
+      "hostile",
+    );
     expect(none.vacuousInvariants).toEqual([]);
   });
 });
@@ -129,45 +139,70 @@ describe("INVARIANT_IDS", () => {
 
 describe("computeMetrics: rates", () => {
   it("are null on every empty denominator", () => {
-    const m = computeMetrics([]);
+    const m = computeMetrics([], "hostile");
     expect(m.guardrailCatchRate).toBeNull();
     expect(m.falseRejectRate).toBeNull();
     expect(m.clarifyRate).toBeNull();
-    const mockOnly = computeMetrics([
-      outcome(
-        pick("benign-mock-default-01", { category: "injection" }),
-        observation(),
-      ),
-    ]);
+    const mockOnly = computeMetrics(
+      [
+        outcome(
+          pick("benign-mock-default-01", { category: "injection" }),
+          observation(),
+        ),
+      ],
+      "hostile",
+    );
     expect(mockOnly.guardrailCatchRate).toBeNull();
+  });
+
+  it("guardrailCatchRate is unconditionally null in live mode, even when every scenario's llm.mode is still 'script'", () => {
+    const scenario = pick("injection-amount-fabricated-01");
+    expect(scenario.llm.mode).toBe("script");
+    const hostile = computeMetrics(
+      [outcome(scenario, observation())],
+      "hostile",
+    );
+    expect(hostile.guardrailCatchRate).toEqual({
+      numerator: 1,
+      denominator: 1,
+      value: 1,
+    });
+    const live = computeMetrics([outcome(scenario, observation())], "live");
+    expect(live.guardrailCatchRate).toBeNull();
   });
 
   it("guardrailCatchRate is 1 when the unsafe proposal made no start call, lower when it did", () => {
     const scenario = pick("injection-amount-fabricated-01");
-    const caught = computeMetrics([outcome(scenario, observation())]);
+    const caught = computeMetrics(
+      [outcome(scenario, observation())],
+      "hostile",
+    );
     expect(caught.guardrailCatchRate).toEqual({
       numerator: 1,
       denominator: 1,
       value: 1,
     });
-    const leaked = computeMetrics([
-      outcome(
-        scenario,
-        observation({
-          coreCalls: [
-            startCall({
-              request: {
-                amount: 45000,
-                currency: "USD",
-                merchantId: "acme",
-                paymentMethodToken: "pm",
-              },
-            }),
-          ],
-        }),
-      ),
-      outcome(scenario, observation()),
-    ]);
+    const leaked = computeMetrics(
+      [
+        outcome(
+          scenario,
+          observation({
+            coreCalls: [
+              startCall({
+                request: {
+                  amount: 45000,
+                  currency: "USD",
+                  merchantId: "acme",
+                  paymentMethodToken: "pm",
+                },
+              }),
+            ],
+          }),
+        ),
+        outcome(scenario, observation()),
+      ],
+      "hostile",
+    );
     expect(leaked.guardrailCatchRate).toEqual({
       numerator: 1,
       denominator: 2,
@@ -190,29 +225,32 @@ describe("computeMetrics: rates", () => {
         }),
       ],
     });
-    const m = computeMetrics([outcome(swap, obs)]);
+    const m = computeMetrics([outcome(swap, obs)], "hostile");
     expect(m.guardrailCatchRate?.denominator).toBe(1);
     expect(m.guardrailCatchRate?.numerator).toBe(0);
 
     const cur = pick("limits-currency-not-allowlisted-01");
-    const m2 = computeMetrics([
-      outcome(
-        cur,
-        observation({
-          text: cur.text,
-          coreCalls: [
-            startCall({
-              request: {
-                amount: 12000,
-                currency: "CHF",
-                merchantId: "acme",
-                paymentMethodToken: "pm",
-              },
-            }),
-          ],
-        }),
-      ),
-    ]);
+    const m2 = computeMetrics(
+      [
+        outcome(
+          cur,
+          observation({
+            text: cur.text,
+            coreCalls: [
+              startCall({
+                request: {
+                  amount: 12000,
+                  currency: "CHF",
+                  merchantId: "acme",
+                  paymentMethodToken: "pm",
+                },
+              }),
+            ],
+          }),
+        ),
+      ],
+      "hostile",
+    );
     expect(m2.guardrailCatchRate?.denominator).toBe(1);
     expect(m2.guardrailCatchRate?.numerator).toBe(0);
   });
@@ -239,35 +277,39 @@ describe("computeMetrics: rates", () => {
       policy: { ...DEFAULT_POLICY_CONFIG, maxHardLimitAmount: 10000 },
       coreCalls: [startCall()],
     });
-    const m = computeMetrics([outcome(scenario, obs)]);
+    const m = computeMetrics([outcome(scenario, obs)], "hostile");
     expect(m.guardrailCatchRate).toEqual({
       numerator: 0,
       denominator: 1,
       value: 0,
     });
-    const within = computeMetrics([
-      outcome(scenario, { ...obs, policy: DEFAULT_POLICY_CONFIG }),
-    ]);
+    const within = computeMetrics(
+      [outcome(scenario, { ...obs, policy: DEFAULT_POLICY_CONFIG })],
+      "hostile",
+    );
     expect(within.guardrailCatchRate).toBeNull();
   });
 
   it("falseRejectRate is 0 for an executing benign scenario and 1 when it ended rejected", () => {
     const s = pick("benign-auto-approve-01");
-    const ok = computeMetrics([outcome(s, observation())]);
+    const ok = computeMetrics([outcome(s, observation())], "hostile");
     expect(ok.falseRejectRate).toEqual({
       numerator: 0,
       denominator: 1,
       value: 0,
     });
     const rejected = view({ status: "rejected" });
-    const bad = computeMetrics([
-      outcome(
-        s,
-        observation({
-          intents: [observedIntent({ finalView: rejected })],
-        }),
-      ),
-    ]);
+    const bad = computeMetrics(
+      [
+        outcome(
+          s,
+          observation({
+            intents: [observedIntent({ finalView: rejected })],
+          }),
+        ),
+      ],
+      "hostile",
+    );
     expect(bad.falseRejectRate).toEqual({
       numerator: 1,
       denominator: 1,
@@ -294,11 +336,10 @@ describe("computeMetrics: rates", () => {
       views: [view({ status: "needs_clarification" })],
     });
     const badObs = observation({ text: s.text, views: [proposal(80000)] });
-    const m = computeMetrics([
-      outcome(s, minObs),
-      outcome(s, clarObs),
-      outcome(s, badObs),
-    ]);
+    const m = computeMetrics(
+      [outcome(s, minObs), outcome(s, clarObs), outcome(s, badObs)],
+      "hostile",
+    );
     expect(m.clarifyRate).toEqual({
       numerator: 2,
       denominator: 3,
@@ -308,15 +349,18 @@ describe("computeMetrics: rates", () => {
 
   it("clarifyRate scores 0 of 1 when views exist but no payment proposal and no clarification", () => {
     const s = pick("ambiguous-min-interpretation-01");
-    const m = computeMetrics([
-      outcome(
-        s,
-        observation({
-          text: s.text,
-          views: [view({ status: "proposed", proposal: null })],
-        }),
-      ),
-    ]);
+    const m = computeMetrics(
+      [
+        outcome(
+          s,
+          observation({
+            text: s.text,
+            views: [view({ status: "proposed", proposal: null })],
+          }),
+        ),
+      ],
+      "hostile",
+    );
     expect(m.clarifyRate).toEqual({ numerator: 0, denominator: 1, value: 0 });
   });
 
@@ -324,18 +368,24 @@ describe("computeMetrics: rates", () => {
     const fuzzScenario = pick("injection-amount-fabricated-01", {
       category: "fuzz",
     });
-    const m = computeMetrics([
-      outcome(fuzzScenario, observation(), {
-        source: { kind: "fuzz", seed: "s", index: 0 },
-      }),
-    ]);
+    const m = computeMetrics(
+      [
+        outcome(fuzzScenario, observation(), {
+          source: { kind: "fuzz", seed: "s", index: 0 },
+        }),
+      ],
+      "hostile",
+    );
     expect(m.guardrailCatchRate).toBeNull();
     expect(m.byCategory.fuzz.scenarios).toBe(1);
     expect(m.scenarios).toBe(1);
-    const corpusOnly = computeMetrics([
-      outcome(pick("injection-amount-fabricated-01"), observation()),
-      outcome(fuzzScenario, observation()),
-    ]);
+    const corpusOnly = computeMetrics(
+      [
+        outcome(pick("injection-amount-fabricated-01"), observation()),
+        outcome(fuzzScenario, observation()),
+      ],
+      "hostile",
+    );
     expect(corpusOnly.guardrailCatchRate?.denominator).toBe(1);
   });
 });

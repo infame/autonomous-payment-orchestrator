@@ -324,13 +324,15 @@ async function runHostile(
           },
         }),
   });
-  const metrics = computeMetrics(suite.outcomes);
+  const metrics = computeMetrics(suite.outcomes, "hostile");
   const report = buildReport(
     suite,
     metrics,
     previous !== null && baselineFile !== null
       ? { file: baselineFile, startedAt: previous.startedAt }
       : null,
+    null,
+    deps.cwd,
   );
   const diff: ReportDiff | null =
     previous === null ? null : diffReports(previous, report);
@@ -464,7 +466,7 @@ async function runLive(
     llm: live.client,
     stopBefore: () => live.budget.exhausted,
   });
-  const metrics = computeMetrics(suite.outcomes);
+  const metrics = computeMetrics(suite.outcomes, "live");
   const liveMetrics = computeLiveMetrics(suite.outcomes, k);
   const report = buildReport(
     suite,
@@ -483,6 +485,7 @@ async function runLive(
       scenariosRun: suite.outcomes.length,
       metrics: liveMetrics,
     },
+    deps.cwd,
   );
   const diff: ReportDiff | null =
     previous === null ? null : diffReports(previous, report);
