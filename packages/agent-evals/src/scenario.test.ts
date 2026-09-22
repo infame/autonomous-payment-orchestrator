@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { loadCorpus, parseScenario, ScenarioLoadError } from "./scenario.js";
+import {
+  loadCorpus,
+  parseScenario,
+  parseScenarioValue,
+  ScenarioLoadError,
+} from "./scenario.js";
 
 function valid(
   overrides: Record<string, unknown> = {},
@@ -109,7 +114,44 @@ describe("parseScenario", () => {
   });
 });
 
+describe("parseScenarioValue", () => {
+  it("accepts a decoded value and runs the domain-constructor gate", () => {
+    expect(parseScenarioValue("mem", valid()).id).toBe("unit-01");
+    const bad = valid({
+      llm: {
+        mode: "script",
+        proposals: [
+          {
+            kind: "propose_payment",
+            amount: 1.5,
+            currency: "USD",
+            merchantId: "acme",
+            reasoning: "r",
+          },
+        ],
+      },
+    });
+    expect(() => parseScenarioValue("mem", bad)).toThrow(
+      /mem \(scenario "unit-01"\).*amount/,
+    );
+    expect(() => parseScenarioValue("mem", { id: 3 })).toThrow(
+      ScenarioLoadError,
+    );
+  });
+
+  it("accepts category fuzz (only the corpus loader bans it)", () => {
+    expect(
+      parseScenarioValue("mem", valid({ category: "fuzz" })).category,
+    ).toBe("fuzz");
+  });
+});
+
 describe("loadCorpus", () => {
+  it("rejects a corpus file whose category is fuzz", () => {
+    const dir = tempDir({ "unit-01.json": valid({ category: "fuzz" }) });
+    expect(() => loadCorpus(dir)).toThrow(/reserved for generated/);
+  });
+
   it("throws when the filename does not match the id", () => {
     const dir = tempDir({ "other-name.json": valid() });
     expect(() => loadCorpus(dir)).toThrow(/other-name\.json.*unit-01/);

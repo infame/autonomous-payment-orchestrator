@@ -8,6 +8,11 @@ import {
   startCall,
   view,
 } from "../oracles/observation-fixture.js";
+import { fuzzEntries, runSuite } from "../eval-run.js";
+import {
+  FUZZ_GENERATOR_VERSION,
+  generateFuzzScenario,
+} from "../fuzz/generate.js";
 import { loadCorpus } from "../scenario.js";
 import { buildReport } from "./json.js";
 import { reportOf, suiteOf } from "./test-support.js";
@@ -16,7 +21,7 @@ import { parseReport } from "./types.js";
 describe("buildReport", () => {
   it("records a clean run as a passing gate with one ok scenario", async () => {
     const r = await reportOf("clean");
-    expect(r.schemaVersion).toBe(1);
+    expect(r.schemaVersion).toBe(2);
     expect(r.startedAt).toBe("2026-03-04T05:06:07.008Z");
     expect(r.corpus.scenarios).toBe(1);
     expect(r.gate).toEqual({
@@ -43,7 +48,10 @@ describe("buildReport", () => {
     expect(r.violations).toHaveLength(1);
     const [v] = r.violations;
     expect(v?.invariant).toBe("I8");
-    expect(v?.evidence.corpusFile).toMatch(/cli-fixture-violating\.json$/);
+    expect(v?.evidence.source).toEqual({
+      kind: "corpus",
+      file: expect.stringMatching(/cli-fixture-violating\.json$/) as string,
+    });
     expect(v?.evidence.intents).toHaveLength(3);
     expect(
       v?.evidence.coreCalls.filter((c) => c.method === "startPaymentWorkflow"),
@@ -111,6 +119,7 @@ describe("redaction", () => {
     });
     const outcome: ScenarioOutcome = {
       scenario,
+      source: { kind: "corpus" },
       observation: obs,
       invariants: [
         {
@@ -151,5 +160,40 @@ describe("redaction", () => {
       expect(text).not.toContain(canary);
     }
     expect(text).toContain("acme");
+  });
+
+  it("records fuzz provenance and never serialises generated text or description", async () => {
+    const seed = "canary-seed";
+    const entries = fuzzEntries(seed, 6);
+    const suite = await runSuite(entries, {
+      mode: "hostile",
+      corpusDir: "none",
+      fuzz: { seed, count: 6, generator: FUZZ_GENERATOR_VERSION },
+    });
+    const report = buildReport(suite, computeMetrics(suite.outcomes), null);
+    expect(report.corpus.scenarios).toBe(0);
+    expect(report.fuzz).toEqual({
+      seed,
+      count: 6,
+      generator: FUZZ_GENERATOR_VERSION,
+      scenarios: 6,
+      startCalls: report.metrics.byCategory.fuzz.startCalls,
+      safetyViolations: 0,
+      errors: 0,
+    });
+    expect(report.scenarios.map((s) => s.source)).toEqual(
+      [0, 1, 2, 3, 4, 5].map((index) => ({ kind: "fuzz", seed, index })),
+    );
+    const text = JSON.stringify(report);
+    for (let i = 0; i < 6; i += 1) {
+      const s = generateFuzzScenario(seed, i);
+      expect(text).not.toContain(JSON.stringify(s.text).slice(1, -1));
+      expect(text).not.toContain(s.description);
+    }
+    expect(parseReport(JSON.parse(text))).toEqual(report);
+  });
+
+  it("records a null fuzz block when the layer did not run", async () => {
+    expect((await reportOf("clean")).fuzz).toBeNull();
   });
 });

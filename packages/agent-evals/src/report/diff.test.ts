@@ -51,4 +51,23 @@ describe("diffReports", () => {
     expect(back.newlyPassingScenarios).toEqual([s.id]);
     expect(back.newlyFailingScenarios).toEqual([]);
   });
+
+  it("carries a fuzzScenarios delta row", async () => {
+    const previous = await reportOf("clean");
+    const current: EvalReport = {
+      ...previous,
+      baseline,
+      metrics: {
+        ...previous.metrics,
+        byCategory: {
+          ...previous.metrics.byCategory,
+          fuzz: { ...previous.metrics.byCategory.fuzz, scenarios: 200 },
+        },
+      },
+    };
+    const row = diffReports(previous, current).metricDeltas.find(
+      (d) => d.name === "fuzzScenarios",
+    );
+    expect(row).toEqual({ name: "fuzzScenarios", before: 0, after: 200 });
+  });
 });

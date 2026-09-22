@@ -34,6 +34,7 @@ function metricValues(r: EvalReport): readonly [string, number | null][] {
     ["expectationFailures", m.expectationFailures],
     ["scenariosWithExpectationFailures", m.scenariosWithExpectationFailures],
     ["startCalls", m.startCalls],
+    ["fuzzScenarios", m.byCategory.fuzz.scenarios],
     ["guardrailCatchRate", m.guardrailCatchRate?.value ?? null],
     ["falseRejectRate", m.falseRejectRate?.value ?? null],
     ["clarifyRate", m.clarifyRate?.value ?? null],

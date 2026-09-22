@@ -18,15 +18,29 @@ function stamp(at: Date): string {
   return at.toISOString().replace(/[-:]/g, "").replace(".", "");
 }
 
-/** Newest `*-<mode>.json` by filename, or null. */
-export function findBaseline(outDir: string, mode: string): string | null {
+/**
+ * Precompiled per literal mode and looked up by exact key: the mode is never
+ * interpolated into a RegExp, so a metacharacter (or prototype-key) mode
+ * cannot alter the match.
+ */
+const BASELINE_PATTERNS: ReadonlyMap<string, RegExp> = new Map([
+  ["hostile", /^\d{8}T\d{9}Z-hostile\.json$/],
+  ["live", /^\d{8}T\d{9}Z-live\.json$/],
+]);
+
+/** Newest `*-<mode>.json` by filename, or null (also for an unknown mode). */
+export function findBaseline(
+  outDir: string,
+  mode: "hostile" | "live",
+): string | null {
+  const pattern = BASELINE_PATTERNS.get(mode);
+  if (pattern === undefined) return null;
   let entries: string[];
   try {
     entries = readdirSync(outDir);
   } catch {
     return null;
   }
-  const pattern = new RegExp(`^\\d{8}T\\d{9}Z-${mode}\\.json$`);
   const newest = entries
     .filter((f) => pattern.test(f))
     .sort()

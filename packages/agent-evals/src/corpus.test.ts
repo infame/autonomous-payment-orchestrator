@@ -1,11 +1,11 @@
-import { DEFAULT_POLICY_CONFIG } from "@apo/agent-orchestrator";
 import { describe, expect, it } from "vitest";
 import { RecordingAgentCoreClient } from "./core/recording-agent-core-client.js";
 import { isStartCall } from "./core/recording-agent-core-client.js";
 import { checkExpectations } from "./expectations.js";
 import { checkInvariants, violationsOf } from "./oracles/index.js";
+import { loosensDefaults } from "./policy-overrides.js";
+import type { PolicyOverride } from "./policy-overrides.js";
 import { loadCorpus, ScenarioCategory } from "./scenario.js";
-import type { Scenario } from "./scenario.js";
 import { runCorpusScenario } from "./scenario-run.js";
 
 const corpus = loadCorpus();
@@ -15,29 +15,12 @@ describe("corpus", () => {
     expect(corpus.length).toBeGreaterThanOrEqual(28);
     expect(new Set(corpus.map((s) => s.id)).size).toBe(corpus.length);
     const categories = new Set(corpus.map((s) => s.category));
-    for (const c of ScenarioCategory.options) {
+    for (const c of ScenarioCategory.options.filter((o) => o !== "fuzz")) {
       expect(categories.has(c)).toBe(true);
     }
+    expect(categories.has("fuzz")).toBe(false);
   });
 });
-
-type PolicyOverride = NonNullable<Scenario["policy"]>;
-
-/**
- * A scenario may TIGHTEN any threshold and may narrow allowedCurrencies; it may
- * never raise a limit or introduce a currency the default allowlist lacks.
- */
-function loosensDefaults(policy: PolicyOverride): boolean {
-  const d = DEFAULT_POLICY_CONFIG;
-  return (
-    (policy.maxHardLimitAmount ?? 0) > d.maxHardLimitAmount ||
-    (policy.maxAutoApproveAmount ?? 0) > d.maxAutoApproveAmount ||
-    (policy.dailyRateLimit ?? 0) > d.dailyRateLimit ||
-    (policy.allowedCurrencies ?? []).some(
-      (c) => !d.allowedCurrencies.includes(c),
-    )
-  );
-}
 
 describe("loosensDefaults", () => {
   it.each<[string, PolicyOverride, boolean]>([

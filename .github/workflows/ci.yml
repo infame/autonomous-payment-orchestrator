@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -85,8 +88,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # No build step here: eval:hostile's pre-script builds
       # @apo/agent-orchestrator (only its dist is consumed) and the CLI itself
-      # runs from src via tsx. The step exits non-zero on any safety violation
-      # (the only gate; the other metrics are informational).
+      # runs from src via tsx. The run includes the fuzz cases at the fixed
+      # default seed, and the report records the seed and generator version so
+      # any case replays locally. The step fails on exit 1 (safety violation, the
+      # only metric gate), 2 (expectation failure) and 3 (harness error).
       - run: pnpm --filter @apo/agent-evals eval:hostile
       # if: always() so the report of a FAILED run is still uploaded, which is
       # exactly when someone needs to read it.

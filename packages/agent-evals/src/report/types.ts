@@ -1,5 +1,5 @@
 /**
- * Report shapes (`schemaVersion` 1) and the Zod schema used to parse an
+ * Report shapes (`schemaVersion` 2) and the Zod schema used to parse an
  * UNTRUSTED baseline file back in. The interfaces and the schema mirror each
  * other 1:1; `parseReport` is the only reader.
  *
@@ -37,9 +37,16 @@ export type EvidenceCoreCall =
       readonly status: string | null;
     };
 
+/**
+ * Where a scenario came from, as a pointer that never echoes hostile text:
+ * a corpus file path, or the (seed, index) a fuzz case is replayed from.
+ */
+export type EvidenceSource =
+  | { readonly kind: "corpus"; readonly file: string }
+  | { readonly kind: "fuzz"; readonly seed: string; readonly index: number };
+
 export interface ObservationEvidence {
-  /** Pointer `<corpusDir>/<id>.json`; does not echo hostile text. */
-  readonly corpusFile: string;
+  readonly source: EvidenceSource;
   readonly policy: EvidencePolicy;
   readonly intents: readonly {
     readonly id: string;
@@ -72,6 +79,7 @@ export interface ReportedViolation {
 export interface ScenarioReport {
   readonly id: string;
   readonly category: string;
+  readonly source: EvidenceSource;
   /** No violations, no expectation failures, no harness error. */
   readonly ok: boolean;
   readonly durationMs: number;
@@ -91,12 +99,23 @@ export interface ScenarioReport {
 }
 
 export interface EvalReport {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly mode: "hostile";
   /** ISO UTC. */
   readonly startedAt: string;
   readonly durationMs: number;
+  /** `scenarios` counts CORPUS-source scenarios only. */
   readonly corpus: { readonly dir: string; readonly scenarios: number };
+  /** null when the fuzz layer was disabled (--fuzz-count 0). */
+  readonly fuzz: {
+    readonly seed: string;
+    readonly count: number;
+    readonly generator: number;
+    readonly scenarios: number;
+    readonly startCalls: number;
+    readonly safetyViolations: number;
+    readonly errors: number;
+  } | null;
   readonly gate: {
     readonly name: "safety_violations";
     readonly value: number;
@@ -171,12 +190,18 @@ const MetricsSchema = z.object({
     duplicate: CategoryMetricsSchema,
     tenancy: CategoryMetricsSchema,
     "clarify-abuse": CategoryMetricsSchema,
+    fuzz: CategoryMetricsSchema,
   }),
   vacuousInvariants: z.array(InvariantIdSchema),
 });
 
+const EvidenceSourceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("corpus"), file: z.string() }),
+  z.object({ kind: z.literal("fuzz"), seed: z.string(), index: z.number() }),
+]);
+
 const EvidenceSchema = z.object({
-  corpusFile: z.string(),
+  source: EvidenceSourceSchema,
   policy: z.object({
     allowedCurrencies: z.array(z.string()),
     maxAutoApproveAmount: z.number(),
@@ -222,11 +247,22 @@ const EvidenceSchema = z.object({
 });
 
 export const EvalReportSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   mode: z.literal("hostile"),
   startedAt: z.string(),
   durationMs: z.number(),
   corpus: z.object({ dir: z.string(), scenarios: z.number() }),
+  fuzz: z
+    .object({
+      seed: z.string(),
+      count: z.number(),
+      generator: z.number(),
+      scenarios: z.number(),
+      startCalls: z.number(),
+      safetyViolations: z.number(),
+      errors: z.number(),
+    })
+    .nullable(),
   gate: z.object({
     name: z.literal("safety_violations"),
     value: z.number(),
@@ -237,6 +273,7 @@ export const EvalReportSchema = z.object({
     z.object({
       id: z.string(),
       category: z.string(),
+      source: EvidenceSourceSchema,
       ok: z.boolean(),
       durationMs: z.number(),
       safetyViolations: z.number(),

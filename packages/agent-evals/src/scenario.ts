@@ -2,7 +2,8 @@
  * Scenario schema (spec 04 §3) and sync JSON loader. Zod validates shape; the
  * domain constructors in llm/proposal-from-json.ts gate scripted proposals and
  * are run eagerly at load so a bad proposal fails at LOAD, not at run.
- * `llm.mode: "live"` is deliberately absent: live mode arrives with the CLI.
+ * Category "fuzz" marks generated scenarios (src/fuzz) and is rejected in a
+ * corpus file. `llm.mode: "live"` is deliberately absent: live mode arrives with the CLI.
  * `description` is prose for reports/reviewers and is never read by the
  * harness. `expect.coreCalls` counts `startPaymentWorkflow` calls only
  * (`getRunStatus` is excluded).
@@ -27,6 +28,7 @@ export const ScenarioCategory = z.enum([
   "duplicate",
   "tenancy",
   "clarify-abuse",
+  "fuzz",
 ]);
 
 const IntentStatusSchema = z.custom<IntentStatus>(
@@ -202,15 +204,12 @@ export class ScenarioLoadError extends Error {
   }
 }
 
-export function parseScenario(source: string, raw: string): Scenario {
-  let json: unknown;
-  try {
-    json = JSON.parse(raw);
-  } catch (err) {
-    throw new ScenarioLoadError(
-      `${source}: invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
+/**
+ * Schema + domain-constructor gate over an already-decoded value. Shared by
+ * the file loader and the fuzz generator, so generated scenarios pass exactly
+ * the checks a hand-written corpus file does.
+ */
+export function parseScenarioValue(source: string, json: unknown): Scenario {
   const parsed = Scenario.safeParse(json);
   if (!parsed.success) {
     const id =
@@ -239,6 +238,18 @@ export function parseScenario(source: string, raw: string): Scenario {
   return scenario;
 }
 
+export function parseScenario(source: string, raw: string): Scenario {
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch (err) {
+    throw new ScenarioLoadError(
+      `${source}: invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  return parseScenarioValue(source, json);
+}
+
 const DEFAULT_CORPUS_DIR = new URL("./corpus/", import.meta.url);
 
 export function loadCorpus(
@@ -259,6 +270,11 @@ export function loadCorpus(
   for (const file of files) {
     const path = join(dirPath, file);
     const scenario = parseScenario(path, readFileSync(path, "utf8"));
+    if (scenario.category === "fuzz") {
+      throw new ScenarioLoadError(
+        `${path}: category "fuzz" is reserved for generated scenarios; a promoted finding needs a hand-chosen category`,
+      );
+    }
     if (basename(file, ".json") !== scenario.id) {
       throw new ScenarioLoadError(
         `${path}: filename does not match scenario id "${scenario.id}"`,

@@ -43,6 +43,15 @@ describe("findBaseline", () => {
     );
   });
 
+  it("returns null for an unknown mode, never treating it as a pattern", () => {
+    const dir = tmp();
+    writeFileSync(join(dir, "20260101T000000000Z-hostile.json"), "{}");
+    writeFileSync(join(dir, "20260101T000000000Z-live.json"), "{}");
+    for (const mode of [".*", "hostile|live", "constructor", ""]) {
+      expect(findBaseline(dir, mode as "hostile"), mode).toBeNull();
+    }
+  });
+
   it("returns null for an empty or missing directory", () => {
     const dir = tmp();
     expect(findBaseline(dir, "hostile")).toBeNull();
@@ -66,10 +75,10 @@ describe("readBaseline", () => {
     expect(readBaseline(join(dir, "bad.json"))).toBeNull();
     const r = await reportOf("clean");
     writeFileSync(
-      join(dir, "v2.json"),
-      JSON.stringify({ ...r, schemaVersion: 2 }),
+      join(dir, "v99.json"),
+      JSON.stringify({ ...r, schemaVersion: 99 }),
     );
-    expect(readBaseline(join(dir, "v2.json"))).toBeNull();
+    expect(readBaseline(join(dir, "v99.json"))).toBeNull();
     writeFileSync(
       join(dir, "shape.json"),
       JSON.stringify({ schemaVersion: 1 }),

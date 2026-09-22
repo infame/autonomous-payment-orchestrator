@@ -1,11 +1,20 @@
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { EXIT, runCli } from "./cli.js";
 import type { CliDeps } from "./cli.js";
+import { FUZZ_GENERATOR_VERSION } from "./fuzz/generate.js";
 import { fixtureDir } from "./report/test-support.js";
 import { parseReport } from "./report/types.js";
+import { parseScenarioValue } from "./scenario.js";
 import type { EvalReport } from "./report/types.js";
 
 interface Harness {
@@ -45,6 +54,24 @@ function readReport(dir: string): EvalReport {
   const parsed = parseReport(JSON.parse(readFileSync(join(dir, file), "utf8")));
   if (parsed === null) throw new Error("report does not parse");
   return parsed;
+}
+
+function mixedCorpus(fixtures: readonly string[]): {
+  corpus: string;
+  out: string;
+} {
+  const root = tmp();
+  const corpus = join(root, "corpus");
+  const out = join(root, "out");
+  mkdirSync(corpus);
+  mkdirSync(out);
+  for (const name of fixtures) {
+    const dir = fixtureDir(name);
+    for (const file of readdirSync(dir)) {
+      copyFileSync(join(dir, file), join(corpus, file));
+    }
+  }
+  return { corpus, out };
 }
 
 describe("runCli exit codes", () => {
@@ -98,6 +125,34 @@ describe("runCli exit codes", () => {
     );
     expect(code).toBe(EXIT.harnessError);
     expect(readReport(out).metrics.errors).toBe(1);
+  });
+
+  it("gives a safety violation precedence over a harness error in the same run", async () => {
+    const { corpus, out } = mixedCorpus(["violating", "harness-error"]);
+    const code = await runCli(
+      ["--corpus", corpus, "--out", out],
+      harness().deps,
+    );
+    expect(code).toBe(EXIT.safetyViolation);
+    const r = readReport(out);
+    expect(r.metrics.safetyViolations).toBe(1);
+    expect(r.metrics.errors).toBe(1);
+  });
+
+  it("gives a harness error precedence over expectation failures", async () => {
+    const { corpus, out } = mixedCorpus([
+      "expectation-failure",
+      "harness-error",
+    ]);
+    const code = await runCli(
+      ["--corpus", corpus, "--out", out],
+      harness().deps,
+    );
+    expect(code).toBe(EXIT.harnessError);
+    const r = readReport(out);
+    expect(r.metrics.safetyViolations).toBe(0);
+    expect(r.metrics.errors).toBe(1);
+    expect(r.metrics.expectationFailures).toBeGreaterThan(0);
   });
 
   it("exits 3 for live mode, unknown flag, missing corpus dir and empty corpus, writing nothing", async () => {
@@ -199,5 +254,120 @@ describe("runCli baseline", () => {
     expect(code).toBe(EXIT.ok);
     expect(h.err.join("\n")).toContain("warning");
     expect(readReport(out).baseline).toBeNull();
+  });
+});
+
+describe("runCli fuzz", () => {
+  const clean = ["--corpus", fixtureDir("clean")];
+
+  it("--fuzz-count 0 disables the layer: no fuzz scenarios and report.fuzz is null", async () => {
+    const out = tmp();
+    const code = await runCli(
+      [...clean, "--out", out, "--fuzz-count", "0"],
+      harness().deps,
+    );
+    expect(code).toBe(EXIT.ok);
+    const r = readReport(out);
+    expect(r.fuzz).toBeNull();
+    expect(r.scenarios.every((s) => s.source.kind === "corpus")).toBe(true);
+    expect(r.metrics.byCategory.fuzz.scenarios).toBe(0);
+  });
+
+  it("--fuzz-count 5 appends exactly 5 generated scenarios and records seed and generator", async () => {
+    const out = tmp();
+    const code = await runCli(
+      [...clean, "--out", out, "--fuzz-count", "5", "--fuzz-seed", "cli-seed"],
+      harness().deps,
+    );
+    expect(code).toBe(EXIT.ok);
+    const r = readReport(out);
+    expect(r.corpus.scenarios).toBe(1);
+    expect(r.scenarios).toHaveLength(6);
+    expect(r.scenarios.filter((s) => s.source.kind === "fuzz")).toHaveLength(5);
+    expect(r.gate.pass).toBe(true);
+    expect(r.fuzz).toMatchObject({
+      seed: "cli-seed",
+      count: 5,
+      generator: FUZZ_GENERATOR_VERSION,
+      scenarios: 5,
+      safetyViolations: 0,
+      errors: 0,
+    });
+  });
+
+  it("the same seed yields identical scenario id lists across runs", async () => {
+    const ids = async (): Promise<string[]> => {
+      const out = tmp();
+      await runCli(
+        [
+          ...clean,
+          "--out",
+          out,
+          "--fuzz-count",
+          "7",
+          "--fuzz-seed",
+          "same-seed",
+        ],
+        harness().deps,
+      );
+      return readReport(out).scenarios.map((s) => s.id);
+    };
+    expect(await ids()).toEqual(await ids());
+  });
+
+  it("exits 3 on a bad seed or count, writing nothing", async () => {
+    const out = tmp();
+    const cases: string[][] = [
+      ["--fuzz-seed", "Bad Seed"],
+      ["--fuzz-seed", "../escape"],
+      ["--fuzz-count", "-1"],
+      ["--fuzz-count", "1.5"],
+      ["--fuzz-count", "abc"],
+      ["--fuzz-count", "10001"],
+    ];
+    for (const extra of cases) {
+      const h = harness();
+      expect(
+        await runCli([...clean, "--out", out, ...extra], h.deps),
+        extra.join(" "),
+      ).toBe(EXIT.harnessError);
+      expect(h.err.join("\n")).toContain("--fuzz-");
+    }
+    expect(readdirSync(out)).toEqual([]);
+  });
+
+  it("--dump-fuzz writes one loadable scenario file per generated case", async () => {
+    const out = tmp();
+    const dump = join(tmp(), "dump");
+    const h = harness();
+    await runCli(
+      [
+        ...clean,
+        "--out",
+        out,
+        "--fuzz-count",
+        "4",
+        "--fuzz-seed",
+        "dump-seed",
+        "--dump-fuzz",
+        dump,
+      ],
+      h.deps,
+    );
+    const files = readdirSync(dump).sort();
+    expect(files).toEqual([
+      "fuzz-dump-seed-0000.json",
+      "fuzz-dump-seed-0001.json",
+      "fuzz-dump-seed-0002.json",
+      "fuzz-dump-seed-0003.json",
+    ]);
+    for (const f of files) {
+      const scenario = parseScenarioValue(
+        f,
+        JSON.parse(readFileSync(join(dump, f), "utf8")),
+      );
+      expect(`${scenario.id}.json`).toBe(f);
+    }
+    expect(h.out.join("\n")).toContain("wrote 4 scenarios");
   });
 });

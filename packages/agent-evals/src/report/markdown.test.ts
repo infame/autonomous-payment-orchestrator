@@ -79,6 +79,86 @@ describe("renderMarkdown", () => {
     for (const l of startRows) expect(l.split(" | ")).toHaveLength(3);
   });
 
+  it("strips angle brackets and square brackets so no tag or link can form", async () => {
+    const r = await reportOf("violating");
+    const [v] = r.violations;
+    if (v === undefined) throw new Error("no violation");
+    const hostile = "evil](http://x)<img src=x>`|";
+    const patched: EvalReport = {
+      ...r,
+      violations: [
+        {
+          ...v,
+          evidence: {
+            ...v.evidence,
+            coreCalls: v.evidence.coreCalls.map((c) =>
+              c.method === "startPaymentWorkflow"
+                ? { ...c, merchantId: hostile }
+                : c,
+            ),
+          },
+        },
+      ],
+    };
+    const md = renderMarkdown(patched, null);
+    const startRows = md
+      .split("\n")
+      .filter((l) => l.includes("startPaymentWorkflow"));
+    expect(startRows.length).toBeGreaterThan(0);
+    for (const l of startRows) {
+      expect(l).not.toMatch(/[<>[\]`]/);
+      expect(l.split(" | ")).toHaveLength(3);
+    }
+    expect(cell(hostile)).toBe("evil(http://x)img src=x");
+  });
+
+  it("renders a Fuzz section: disabled when null, provenance when present", async () => {
+    const r = await reportOf("clean");
+    expect(renderMarkdown(r, null)).toContain("Fuzz layer disabled.");
+    const withFuzz: EvalReport = {
+      ...r,
+      fuzz: {
+        seed: "my-seed",
+        count: 200,
+        generator: 1,
+        scenarios: 200,
+        startCalls: 150,
+        safetyViolations: 0,
+        errors: 0,
+      },
+    };
+    const md = renderMarkdown(withFuzz, null);
+    expect(md).toContain("## Fuzz");
+    expect(md).toContain("- Seed: my-seed");
+    expect(md).toContain("- Generator version: 1");
+    expect(md).toContain(
+      "- Scenarios: 200; start calls 150; safety violations 0; harness errors 0",
+    );
+    expect(md).not.toContain("Fuzz layer disabled.");
+  });
+
+  it("names seed, index and a replay command for a fuzz violation, sanitized", async () => {
+    const r = await reportOf("violating");
+    const [v] = r.violations;
+    if (v === undefined) throw new Error("no violation");
+    const patched: EvalReport = {
+      ...r,
+      violations: [
+        {
+          ...v,
+          evidence: {
+            ...v.evidence,
+            source: { kind: "fuzz", seed: "a`b<c>[d]", index: 41 },
+          },
+        },
+      ],
+    };
+    const md = renderMarkdown(patched, null);
+    expect(md).toContain("Fuzz case: seed abcd index 41");
+    expect(md).toContain("--fuzz-seed abcd --fuzz-count 42 --dump-fuzz");
+    expect(md).not.toContain("Corpus file:");
+  });
+
   it("truncates long values to 64 characters", () => {
     expect(cell("a".repeat(200))).toHaveLength(64);
     expect(cell("short")).toBe("short");

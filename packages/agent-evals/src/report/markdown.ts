@@ -3,26 +3,31 @@
  *
  * Every string that can be model- or scenario-controlled (merchantId, ids,
  * paths, messages) goes through `cell()`: control characters (newlines
- * included), `|` and backticks are stripped and the result is truncated to 64
+ * included), `|`, backticks, `<`, `>`, `[` and `]` are stripped (no HTML tag
+ * and no Markdown link can form) and the result is truncated to 64
  * characters (filesystem paths are stripped but not truncated), so a value can neither break a table cell nor start a new
  * heading line.
  */
 import type { Rate } from "../metrics.js";
 import type { ReportDiff } from "./diff.js";
-import type { EvalReport, ObservationEvidence } from "./types.js";
+import type {
+  EvalReport,
+  EvidenceSource,
+  ObservationEvidence,
+} from "./types.js";
 
 const MAX_CELL = 64;
 // eslint-disable-next-line no-control-regex -- stripping control characters is the point
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
 
 export function cell(value: string): string {
-  const s = value.replace(CONTROL, "").replace(/[|`]/g, "");
+  const s = value.replace(CONTROL, "").replace(/[|`<>[\]]/g, "");
   return s.length > MAX_CELL ? `${s.slice(0, MAX_CELL - 1)}…` : s;
 }
 
 /** Like `cell` without truncation: for harness-authored filesystem paths. */
 function filePath(value: string): string {
-  return value.replace(CONTROL, "").replace(/[|`]/g, "");
+  return value.replace(CONTROL, "").replace(/[|`<>[\]]/g, "");
 }
 
 const n = (v: number | null): string => (v === null ? "n/a" : String(v));
@@ -44,10 +49,33 @@ function rateRow(name: string, r: Rate | null): string[] {
     : [name, String(r.numerator), String(r.denominator), r.value.toFixed(3)];
 }
 
+function sourceLines(source: EvidenceSource): string[] {
+  if (source.kind === "corpus") {
+    return [`Corpus file: \`${filePath(source.file)}\``, ""];
+  }
+  const seed = filePath(source.seed);
+  return [
+    `Fuzz case: seed ${seed} index ${String(source.index)}`,
+    "",
+    `Replay: \`pnpm --filter @apo/agent-evals eval:hostile --fuzz-seed ${seed} --fuzz-count ${String(source.index + 1)} --dump-fuzz <dir>\``,
+    "",
+  ];
+}
+
+function fuzzLines(f: EvalReport["fuzz"]): string[] {
+  if (f === null) return ["Fuzz layer disabled.", ""];
+  return [
+    `- Seed: ${cell(f.seed)}`,
+    `- Count: ${String(f.count)}`,
+    `- Generator version: ${String(f.generator)}`,
+    `- Scenarios: ${String(f.scenarios)}; start calls ${String(f.startCalls)}; safety violations ${String(f.safetyViolations)}; harness errors ${String(f.errors)}`,
+    "",
+  ];
+}
+
 function evidenceLines(e: ObservationEvidence): string[] {
   const lines: string[] = [
-    `Corpus file: \`${filePath(e.corpusFile)}\``,
-    "",
+    ...sourceLines(e.source),
     `Observed policy: hard limit ${String(e.policy.maxHardLimitAmount)}, auto-approve ${String(e.policy.maxAutoApproveAmount)}, daily rate limit ${String(e.policy.dailyRateLimit)}, currencies ${e.policy.allowedCurrencies.map(cell).join(", ")}`,
     "",
     "Intents:",
@@ -164,6 +192,9 @@ export function renderMarkdown(
         rateRow("clarifyRate", m.clarifyRate),
       ],
     ),
+    "## Fuzz",
+    "",
+    ...fuzzLines(report.fuzz),
     "## Violations",
     "",
   ];
