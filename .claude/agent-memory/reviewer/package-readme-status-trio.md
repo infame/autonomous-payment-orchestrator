@@ -152,3 +152,17 @@ verdict's route out of \`proposed\`.**`, README:532). An ADR `**Update:**` note
 that quotes the title without that period is a grep miss for the next person.
 When reviewing an ADR↔README cross-reference, do not eyeball it: `grep -n` the
 quoted string in the README and confirm it hits.
+
+**A policy-rule table is a SIXTH enumeration site (2026-09-20,
+`fix/merchant-grounding`):** `agent-orchestrator`'s README gained a
+`| Rule | Condition | Verdict |` table under `## Why the policy layer is
+separate` (~line 601) that restates `policy/rules.ts`'s `POLICY_RULES` array
+row-for-row, *in evaluation order*. When a diff adds/reorders a rule, check
+the table has the row, in the right position, with the right comparator
+(`>` for `maxHardLimit`, `>=` for `dailyRateLimit`/`maxAutoApprove`) — and
+that `POLICY_REASON_CODES` + the `verdict.ts` union + `rules.test.ts`'s
+`POLICY_RULES order` array-equality test all moved too (that test is the
+cheapest guard that ordering is really the precedence law). What this branch
+still missed: the `Roadmap` checklist got no line, although ADR-0015 and
+ADR-0016 each have one — the Roadmap is this README's ADR index, so every
+new ADR that changes package behavior needs a `- [x]` line there.

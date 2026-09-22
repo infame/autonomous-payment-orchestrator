@@ -12,6 +12,7 @@ coverage/
 .claude/.merge-approved.landing
 .claude/agent-memory-local/
 .claude/settings.local.json
+.claude/worktrees/
 
 # local-only, not for the repo but kept on disk for agents/orchestrator to read
 .idea/

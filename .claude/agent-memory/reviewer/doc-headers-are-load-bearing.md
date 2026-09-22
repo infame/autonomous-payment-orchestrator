@@ -160,3 +160,29 @@ one `now` has to be shared across several domain transitions). **A rationale
 section written to satisfy a review comment is itself an unverified claim:
 when it compares this file to siblings, open the siblings.** Cheap heuristic
 that would have caught it: `grep -n "this.clock()" src/app/*.ts`.
+
+**Sixth instance — the steer-vs-enforce quartet (2026-09-20,
+`fix/merchant-grounding`):** a new LLM-steering instruction touches four
+sites that all claim "the prompt only steers, `policy/rules.ts` enforces":
+`adapters/llm/anthropic-prompt.ts` (header + the prompt text),
+`adapters/llm/anthropic-tools.ts` (tool + property `description`),
+`adapters/llm/anthropic-llm-client.ts`'s `## This class never re-checks
+grounding` section, and the README's `**Minor units, grounding, and the
+steer-vs-enforce boundary.**` paragraph. This branch updated the first two
+only, leaving the client header and the README paragraph naming
+`amountMustBeGrounded` as if it were the only grounding guarantee — not
+false, but the omission is exactly the drift this memory exists for.
+Convention to enforce alongside it: every *named* rule in the system prompt
+is pinned by an `anthropic-llm-client.test.ts` test of the form `it("system
+prompt states the <X> rule")` asserting `call?.params.system` `toContain` a
+distinctive phrase ("MINOR units", "SMALLEST candidate amount"). A new
+prompt rule with no such test is a convention gap worth naming in review.
+
+- **A "pure function of its arguments" header is a claim about its IMPORTS too.**
+  `packages/agent-evals/src/fuzz/generate.ts` says `generateFuzzScenario(seed,
+  index)` is a function of its arguments only and tells you to bump
+  `FUZZ_GENERATOR_VERSION` on "any change to this file that alters output" — but
+  it imports the SUT's `extractGroundedAmounts`/`INTENT_STATUSES`, so a SUT
+  change alters output with no bump and no red test (proven 2026-09-21, see
+  [[agent-evals-harness-review]]). On any "pure/deterministic/replayable" header,
+  list the module's imports and ask which ones feed the output.

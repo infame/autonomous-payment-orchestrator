@@ -1,5 +1,5 @@
 - [Docs are aspirational + local-only](project-docs-aspirational.md) — docs/todo and docs/adr describe the target stack; docs/todo is gitignored but present on disk.
-- [Lint is wired, prettier is not enforced](repo-lint-not-wired.md) — eslint flat config is real; prettier has no check script and markdown (incl. READMEs) already fails on main.
+- [Lint is wired, prettier is not enforced](repo-lint-not-wired.md) — eslint is real; `format:check` exists but fails on 53 files, and post-edit.sh is advisory (exit 0), not enforcement.
 - [Reviewing the trunk gate hook](hook-gate-review-heuristic.md) — real gate is now .githooks/reference-transaction (a git hook, not text-matching); guard-commit.sh is just the --no-verify/--force check.
 - [Run the DB suites, do not just read them](verify-db-claims-by-running.md) — Postgres is usually up on :5433; probe "returns what was stored" adapter claims by running.
 - [JSDoc headers are the contract of record](doc-headers-are-load-bearing.md) — check every "always/never/null when" claim against code+tests; incl. the no-free-text-in-errors rule.
@@ -11,3 +11,6 @@
 - [Guard-ordering tests go vacuous](guard-ordering-test-vacuity.md) — check the seed reaches the guarded branch AND that each assertion can observe the side effect (FIXED_CLOCK, fake `calls`).
 - [Reviewing Docker/compose/CI slices](infra-docker-compose-review.md) — sibling Dockerfiles are a `diff`, not a read; compose bare `FOO:` vs `${FOO:-}` is load-bearing.
 - [Verifying hand-rolled derived ids](verifying-hand-rolled-crypto-ids.md) — external UUIDv5 vectors + the 6-point derived-id/idempotency checklist (two dedup windows, the concurrent residual).
+- [One package importing a sibling's dist](cross-package-dist-consumption.md) — pre-script/topo-sort/docker facts verified; pre* trio closed for agent-evals, still open for the next consumer.
+- [Reviewing the agent-evals harness](agent-evals-harness-review.md) — Observation semantics, dist-copy mutation rig (+ footgun), replay trap, step-5 CLI, step-6 fuzz, step-7 live mode, step-8 committed example + DoD sweep (mutation table, doc-headers).
+- [Two parallel agent instruction sets](dual-instruction-sets-codex-claude.md) — CLAUDE.md/.claude vs AGENTS.md/.agents/.codex; diff counterparts; shared hooks only parse Claude's `.tool_input` payload.

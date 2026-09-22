@@ -1,0 +1,29 @@
+- [pay-core persistence decisions](pay-core-persistence-decisions.md) — why the Postgres adapters need an ALS transaction scope; pg-vs-postgres.js and optimistic-lock choices.
+- [Spec vs code in pay-core](pay-core-spec-vs-code.md) — docs/todo/01-pay-core.md is local-only and defers to the code; its §4.1 column lists are incomplete.
+- [Provider error contract](pay-core-provider-error-contract.md) — why declined/unavailable are plain port Errors, and why retry counters must not key on paymentId.
+- [HTTP boundary constraints](pay-core-http-boundary.md) — why an authorize decline isn't 402, why `:id` needs UUID validation, and the per-operation idempotency store rule.
+- [Docker/runtime constraints](pay-core-docker-runtime.md) — verified pnpm-in-Docker gotchas (CI=true, deploy --legacy), the two-node_modules copy rule, drizzle/ must ship with dist/.
+- [durable-ledger invariants](durable-ledger-invariants.md) — operationId must be caller-supplied, UNIQUE(operation_id) alone is impossible, balance = credit − debit.
+- [durable-ledger posting constraints](durable-ledger-posting-constraints.md) — the unique index misses disjoint re-posts, row ids are regenerated per call, int8/numeric gotchas.
+- [durable-ledger ↔ pay-core boundary](durable-ledger-pay-core-boundary.md) — why the client can't be tested against a real in-process pay-core, and authorize's exactly-once hole.
+- [Inngest event dedup, measured](inngest-event-dedup-behavior.md) — a duplicate `id` dedupes the run but returns a fresh, run-less event ULID; the seed header and why it was rejected.
+- [Drizzle migrations in a shared DB](drizzle-shared-database-migrations.md) — two packages sharing `drizzle.__drizzle_migrations` silently skip each other's migrations; give each its own schema.
+- [agent-orchestrator persistence decisions](agent-orchestrator-persistence-decisions.md) — explicit `version`, the `agent` schema, clarification_answer's CHECKs, .set() allow-list, and why "claim before calling durable-ledger" is impossible.
+- [agent-orchestrator use-case decisions](agent-orchestrator-use-case-decisions.md) — `allow` stops at `proposed`, one write per use-case, no-retry conflict rule, why a human reject needs no new column.
+- [agent-orchestrator auto-approve design](agent-orchestrator-auto-approve-design.md) — §7 permits the inline trigger, deterministic UUIDv5 intent ids (no migration), `proposed` ⟹ allow, the non-vacuity control test.
+- [agent-orchestrator LLM adapter decisions](agent-orchestrator-llm-adapter-decisions.md) — three response tools, why the adapter never re-checks grounding, key-never-reaches-the-adapter, the 4xx retryable gap.
+- [agent-orchestrator HTTP/step-8 decisions](agent-orchestrator-http-step8-decisions.md) — X-Customer-Id is scoping not auth, ownership check before the use-case call, uuid `:id` trap, `autoApprove` dead end, slice-4 composition-root rules.
+- [Anthropic SDK constraints](anthropic-sdk-constraints.md) — the silent ANTHROPIC_API_KEY env fallback, the error-class instanceof ordering trap, required Message/ToolUseBlock fixture fields.
+- [config.ts / zod superRefine constraints](config-zod-superrefine-constraints.md) — a missing var suppresses superRefine; `FOO=` coerces to 0, not the default; config-vs-runtime-validator parity rules.
+- [Compose secret env passthrough](compose-secret-env-passthrough.md) — verified: a bare map key leaves the var unset; `${VAR:-}` sets it to "" and breaks `.min(1).optional()` config fields.
+- [Monorepo package wiring](monorepo-package-wiring.md) — a new packages/* needs zero root config changes; vitest.config.ts always fails typed lint and that's fine.
+- [Cross-package imports & build order](cross-package-imports-and-build-order.md) — agent-evals is the first sibling import; dist not a src alias, and the build-before-typecheck contract that follows.
+- [merchantId grounding gap](agent-orchestrator-merchant-grounding-gap.md) — VERIFIED hole: a hostile model's arbitrary merchantId auto-approves to `executing`; being fixed on fix/merchant-grounding.
+- [merchantMustBeGrounded design](agent-orchestrator-merchant-grounding-rule.md) — whole-token case-folded matching, digit-only tokens excluded, `sim.merchant.*` is self-grounding, the two holes left open.
+- [agent-evals harness decisions](agent-evals-harness-decisions.md) — hostile model bounded by domain validation, script exhaustion throws a non-port error, Idempotency-Key is the only auto-approve trigger, GET runs sync.
+- [agent-evals oracle design](agent-evals-oracle-design.md) — attribute effects via the HTTP exchange not the SUT's key, Observation must be multi-intent, the dailyRateLimit TOCTOU that makes I8 red.
+- [agent-evals corpus/schema decisions](agent-evals-corpus-schema-decisions.md) — the I5 HTTP-key dedup hole, coreCalls counts starts only, clarified allow dead-ends at `proposed`, the exactOptionalPropertyTypes step trap.
+- [agent-evals metrics/report/CLI decisions](agent-evals-metrics-report-decisions.md) — CLI runs src via tsx, TOCTOU fixture as the exit-code proof, clarify_rate trusts the echo, report redaction rule.
+- [agent-evals fuzz decisions](agent-evals-fuzz-decisions.md) — fast-check rejected, replay key is seed+index, fuzz must not re-derive the open TOCTOU, fuzz excluded from guardrailCatchRate.
+- [agent-evals live-mode decisions](agent-evals-live-mode-decisions.md) — no Anthropic SDK dep (use createLlmClient), live ignores scenario.llm, measured budget math, reports/ is gitignored.
+- [agent-evals DoD mutation sweep](agent-evals-dod-mutation-sweep.md) — why only a dist mutation turns an oracle red, the I1–I8 disable matrix, spec §10's "8 categories" reading, TOCTOU accepted via ADR-0019.

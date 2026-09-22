@@ -48,3 +48,23 @@ load-bearing.
   against the pre-fix code, and its "positive-control" fallback when mutation
   is blocked) and [[doc-headers-are-load-bearing]]'s "the double hides the
   value" note.
+
+**Third vacuity family — the negative assertion whose input never existed**
+(2026-09-20, `chore/review-followups`): a `drops tokens with no letter` test in
+`policy/grounding.test.ts` asserts `set.has("-")`, `set.has("_")` and
+`set.has("--")` are all `false` against the fixture `"Pay the vendor - $50.00"`
+— only the first binds, the other two tokens are absent from the text and would
+be `false` under ANY implementation, including the old `DIGITS_ONLY` one. For
+every `expect(x.has(v)).toBe(false)` / `not.toContain(v)`, check that `v` is
+actually *derivable from the fixture input*; if the input never contained it,
+the assertion is decoration. Same move as the seeds above, one level down.
+
+**`[].every(...)` is `true` — the recurring shape in this repo (third sighting,
+2026-09-21, `feat/agent-evals-metrics-cli`).** `metrics.ts`'s `clarifyRate` has
+`proposed.length > 0 && proposed.every((a) => a === min)`; drop the length guard
+and an ambiguous scenario that proposed NOTHING counts as "took the minimum
+interpretation". Same shape as `expectations.ts`'s
+`actual.length === expected.startAmounts.length` guard (slice 1 of the corpus).
+Whenever a diff adds `xs.every(...)` over a list that can legitimately be empty,
+look for the length guard and then for the test that kills its removal — in both
+sightings the guard was present and correct but no test bound it.
