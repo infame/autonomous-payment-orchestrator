@@ -41,6 +41,8 @@ const AbortSignalStatics = AbortSignal as unknown as typeof AbortSignal &
 export interface HttpDurableLedgerClientOptions {
   /** No default — every caller must say which durable-ledger instance to talk to. May include a path prefix (e.g. `http://localhost:3001/api`). */
   readonly baseUrl: string;
+  /** Production callers set this shared secret; optional only for isolated adapter tests and embedded callers that deliberately run an unauthenticated test app. */
+  readonly serviceSecret?: string;
   /** Falls back to `DEFAULT_REQUEST_TIMEOUT_MS` when unset; a per-call `RequestOptions.timeoutMs` overrides this. */
   readonly timeoutMs?: number;
 }
@@ -138,6 +140,9 @@ export class HttpDurableLedgerClient implements AgentCoreClient {
     const url = `${this.baseUrl}${path}`;
 
     const headers: Record<string, string> = { Accept: "application/json" };
+    if (this.options.serviceSecret !== undefined) {
+      headers["X-Service-Secret"] = this.options.serviceSecret;
+    }
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
     }

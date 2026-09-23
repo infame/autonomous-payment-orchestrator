@@ -1,0 +1,34 @@
+app = "replace-me-apo-durable-ledger"
+primary_region = "ord"
+
+[build]
+  dockerfile = "packages/durable-ledger/Dockerfile"
+
+[env]
+  PORT = "3100"
+  HOST = "0.0.0.0"
+  PAY_CORE_URL = "http://replace-me-apo-pay-core.flycast:3000"
+  INNGEST_APP_ID = "apo-durable-ledger"
+  INNGEST_DEV = "false"
+  INNGEST_API_BASE_URL = "https://api.inngest.com"
+  INNGEST_SERVE_PATH = "/api/inngest"
+  MIGRATE_ON_BOOT = "true"
+
+[http_service]
+  internal_port = 3100
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"

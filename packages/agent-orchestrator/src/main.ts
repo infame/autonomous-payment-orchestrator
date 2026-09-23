@@ -79,6 +79,7 @@ async function main(): Promise<void> {
   const orchestrator = createAgentOrchestrator({
     databaseUrl: cfg.DATABASE_URL,
     durableLedgerUrl: cfg.DURABLE_LEDGER_URL,
+    durableLedgerServiceSecret: cfg.DURABLE_LEDGER_SERVICE_SECRET,
     durableLedgerTimeoutMs: cfg.DURABLE_LEDGER_TIMEOUT_MS,
     paymentMethodToken: cfg.PAYMENT_METHOD_TOKEN,
     llm: buildLlmOptions(cfg),

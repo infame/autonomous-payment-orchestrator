@@ -1,0 +1,120 @@
+{
+  "id": "ec5259d3-31b5-4d76-94ef-9f721a50a2a9",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "orchestra.live_budget": {
+      "name": "live_budget",
+      "schema": "orchestra",
+      "columns": {
+        "day": {
+          "name": "day",
+          "type": "date",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "used_calls": {
+          "name": "used_calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "live_budget_used_calls_non_negative": {
+          "name": "live_budget_used_calls_non_negative",
+          "value": "\"orchestra\".\"live_budget\".\"used_calls\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "orchestra.live_grants": {
+      "name": "live_grants",
+      "schema": "orchestra",
+      "columns": {
+        "jti": {
+          "name": "jti",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "issued_at": {
+          "name": "issued_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_calls": {
+          "name": "max_calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "used_calls": {
+          "name": "used_calls",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "bound_session_id": {
+          "name": "bound_session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "live_grants_max_calls_positive": {
+          "name": "live_grants_max_calls_positive",
+          "value": "\"orchestra\".\"live_grants\".\"max_calls\" > 0"
+        },
+        "live_grants_used_calls_non_negative": {
+          "name": "live_grants_used_calls_non_negative",
+          "value": "\"orchestra\".\"live_grants\".\"used_calls\" >= 0"
+        },
+        "live_grants_used_within_max": {
+          "name": "live_grants_used_within_max",
+          "value": "\"orchestra\".\"live_grants\".\"used_calls\" <= \"orchestra\".\"live_grants\".\"max_calls\""
+        },
+        "live_grants_expires_after_issued": {
+          "name": "live_grants_expires_after_issued",
+          "value": "\"orchestra\".\"live_grants\".\"expires_at\" > \"orchestra\".\"live_grants\".\"issued_at\""
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "orchestra": "orchestra"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

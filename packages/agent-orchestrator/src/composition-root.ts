@@ -82,6 +82,7 @@ export function createLlmClient(options: LlmOptions): LlmClient {
 export interface CreateAgentOrchestratorOptions {
   readonly databaseUrl: string;
   readonly durableLedgerUrl: string;
+  readonly durableLedgerServiceSecret: string;
   readonly durableLedgerTimeoutMs?: number;
   readonly paymentMethodToken: string;
   readonly llm: LlmOptions;
@@ -183,6 +184,7 @@ export function createAgentOrchestrator(
 
   const agentCore = new HttpDurableLedgerClient({
     baseUrl: options.durableLedgerUrl,
+    serviceSecret: options.durableLedgerServiceSecret,
     ...(options.durableLedgerTimeoutMs !== undefined
       ? { timeoutMs: options.durableLedgerTimeoutMs }
       : {}),

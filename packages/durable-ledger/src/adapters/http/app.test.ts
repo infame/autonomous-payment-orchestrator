@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import type { Hono } from "hono";
+import { Hono } from "hono";
 import { createInMemoryDurableLedger } from "../../composition-root.js";
 import { FakePayCoreClient } from "../../workflow/fake-pay-core-client.js";
 import { FakeWorkflowRuns } from "./fake-workflow-runs.js";
@@ -9,20 +9,39 @@ import { Money } from "../../domain/money.js";
 import type { InMemoryLedgerRepository } from "../memory/in-memory-ledger-repository.js";
 import { WorkflowEngineUnavailableError } from "../../ports/workflow-runs.js";
 import type { WorkflowRunSnapshot } from "../../ports/workflow-runs.js";
+import { createLedgerApp } from "./app.js";
 
 const VALID_EVENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const TEST_SERVICE_SECRET = "test-durable-ledger-service-secret";
 
-function buildApp(): {
+function authenticatedTestApp(app: Hono, serviceSecret: string): Hono {
+  const authenticated = new Hono();
+  authenticated.all("*", (c) => {
+    const headers = new Headers(c.req.raw.headers);
+    headers.set("X-Service-Secret", serviceSecret);
+    return app.fetch(new Request(c.req.raw, { headers }));
+  });
+  return authenticated;
+}
+
+function buildApp(serviceSecret = TEST_SERVICE_SECRET): {
   app: Hono;
+  rawApp: Hono;
   ledger: InMemoryLedgerRepository;
   runs: FakeWorkflowRuns;
 } {
   const runs = new FakeWorkflowRuns();
-  const { app, ledger } = createInMemoryDurableLedger({
+  const { app: rawApp, ledger } = createInMemoryDurableLedger({
     payCore: new FakePayCoreClient(),
     runs,
+    serviceSecret,
   });
-  return { app, ledger, runs };
+  return {
+    app: authenticatedTestApp(rawApp, serviceSecret),
+    rawApp,
+    ledger,
+    runs,
+  };
 }
 
 const PAYMENT_EXECUTE_BODY = {
@@ -33,6 +52,94 @@ const PAYMENT_EXECUTE_BODY = {
 };
 
 describe("createLedgerApp", () => {
+  describe("service-to-service authentication", () => {
+    const serviceSecret = "s".repeat(32);
+
+    it.each([
+      ["POST", "/workflows/payment"],
+      ["GET", `/workflows/${VALID_EVENT_ID}`],
+      ["GET", `/ledger/entries?paymentId=${randomUUID()}`],
+      ["GET", "/ledger/accounts/acquirer_clearing/balance?currency=USD"],
+    ])("hides %s %s without the service secret", async (method, path) => {
+      const { rawApp, runs } = buildApp(serviceSecret);
+      const res = await rawApp.request(path, {
+        method,
+        ...(method === "POST"
+          ? {
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(PAYMENT_EXECUTE_BODY),
+            }
+          : {}),
+      });
+
+      expect(res.status).toBe(404);
+      expect(runs.startCalls).toHaveLength(0);
+    });
+
+    it("accepts a matching secret on a business route", async () => {
+      const { rawApp, runs } = buildApp(serviceSecret);
+      const res = await rawApp.request("/workflows/payment", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Service-Secret": serviceSecret,
+        },
+        body: JSON.stringify(PAYMENT_EXECUTE_BODY),
+      });
+
+      expect(res.status).toBe(202);
+      expect(runs.startCalls).toHaveLength(1);
+    });
+
+    it("rejects a wrong same-length secret without touching the workflow port", async () => {
+      const { rawApp, runs } = buildApp(serviceSecret);
+      const res = await rawApp.request("/workflows/payment", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Service-Secret": "x".repeat(32),
+        },
+        body: JSON.stringify(PAYMENT_EXECUTE_BODY),
+      });
+
+      expect(res.status).toBe(404);
+      expect(runs.startCalls).toHaveLength(0);
+    });
+
+    it("keeps health and the Inngest callback outside business-route auth", async () => {
+      const { ledger, runs } = buildApp();
+      const app = createLedgerApp({
+        ledger,
+        runs,
+        serviceSecret,
+        inngestHandler: async (c) => c.json({ callback: "reachable" }),
+      });
+
+      expect((await app.request("/healthz")).status).toBe(200);
+      const callback = await app.request("/api/inngest", { method: "POST" });
+      expect(callback.status).toBe(200);
+      expect(await callback.json()).toEqual({ callback: "reachable" });
+    });
+
+    it("fails closed when a public app is constructed with an invalid secret", () => {
+      const { ledger, runs } = buildApp();
+
+      expect(() =>
+        createLedgerApp({ ledger, runs, serviceSecret: "too-short" }),
+      ).toThrow("serviceSecret must contain at least 32 characters");
+    });
+
+    it("fails closed when the exported in-memory factory receives an invalid secret", () => {
+      expect(() =>
+        createInMemoryDurableLedger({
+          payCore: new FakePayCoreClient(),
+          runs: new FakeWorkflowRuns(),
+          serviceSecret: "too-short",
+        }),
+      ).toThrow("serviceSecret must contain at least 32 characters");
+    });
+  });
+
   describe("GET /healthz", () => {
     it("returns 200 with a static ok body", async () => {
       const { app } = buildApp();

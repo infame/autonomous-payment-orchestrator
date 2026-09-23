@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { LedgerRepository } from "../../ports/ledger-repository.js";
@@ -16,12 +17,35 @@ import { HttpError, mapError } from "./server-error-mapper.js";
 export interface LedgerAppDeps {
   readonly ledger: LedgerRepository;
   readonly runs: WorkflowRuns;
+  /** Every business route requires this exact `X-Service-Secret`; health and the signed Inngest callback remain separate. */
+  readonly serviceSecret: string;
   /** The Inngest `serve()` handler, when one is wired (`../../composition-root.js`). Omitted lets tests build an app with no live Inngest at all. */
   readonly inngestHandler?: (c: Context) => Promise<Response>;
   readonly inngestServePath?: string;
 }
 
 const DEFAULT_INNGEST_SERVE_PATH = "/api/inngest";
+const MIN_SERVICE_SECRET_LENGTH = 32;
+
+function hasServiceAccess(c: Context, expected: string): boolean {
+  const provided = c.req.header("X-Service-Secret");
+  if (provided === undefined) {
+    return false;
+  }
+  const actualBytes = Buffer.from(provided, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+  if (actualBytes.length !== expectedBytes.length) {
+    timingSafeEqual(expectedBytes, expectedBytes);
+    return false;
+  }
+  return timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function requireServiceAccess(c: Context, expected: string): Response | null {
+  return hasServiceAccess(c, expected)
+    ? null
+    : c.json({ error: { code: "not_found", message: "Not found" } }, 404);
+}
 
 /**
  * Builds the driving HTTP adapter for `durable-ledger`: a Hono `app` wired
@@ -32,9 +56,19 @@ const DEFAULT_INNGEST_SERVE_PATH = "/api/inngest";
  * shape and conventions.
  */
 export function createLedgerApp(deps: LedgerAppDeps): Hono {
+  if (
+    typeof deps.serviceSecret !== "string" ||
+    deps.serviceSecret.length < MIN_SERVICE_SECRET_LENGTH
+  ) {
+    throw new TypeError(
+      `serviceSecret must contain at least ${MIN_SERVICE_SECRET_LENGTH} characters`,
+    );
+  }
   const app = new Hono();
 
   app.post("/workflows/payment", async (c) => {
+    const denied = requireServiceAccess(c, deps.serviceSecret);
+    if (denied !== null) return denied;
     // Read/validate the header before touching the request body, so a
     // malformed Idempotency-Key fails fast without consuming the stream.
     const key = optionalIdempotencyKey(c);
@@ -47,6 +81,8 @@ export function createLedgerApp(deps: LedgerAppDeps): Hono {
   });
 
   app.get("/workflows/:eventId", async (c) => {
+    const denied = requireServiceAccess(c, deps.serviceSecret);
+    if (denied !== null) return denied;
     const eventId = EventIdParam.parse(c.req.param("eventId"));
     const snapshot = await deps.runs.findByEventId(eventId);
     if (snapshot === null) {
@@ -60,6 +96,8 @@ export function createLedgerApp(deps: LedgerAppDeps): Hono {
   });
 
   app.get("/ledger/entries", async (c) => {
+    const denied = requireServiceAccess(c, deps.serviceSecret);
+    if (denied !== null) return denied;
     const query = LedgerEntriesQuery.parse({
       paymentId: c.req.query("paymentId"),
       operationId: c.req.query("operationId"),
@@ -75,6 +113,8 @@ export function createLedgerApp(deps: LedgerAppDeps): Hono {
   });
 
   app.get("/ledger/accounts/:account/balance", async (c) => {
+    const denied = requireServiceAccess(c, deps.serviceSecret);
+    if (denied !== null) return denied;
     const account = LedgerAccount.parse(
       decodeURIComponent(c.req.param("account")),
     );

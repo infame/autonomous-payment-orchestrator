@@ -502,15 +502,18 @@ the happy path and pre-effect failures) drive it differently.
 
 `createLedgerApp(deps)` (`src/adapters/http/app.ts`) builds the driving HTTP
 adapter — a Hono app over `LedgerRepository` and a new `WorkflowRuns` port
-(`src/ports/workflow-runs.ts`). No auth, matching `pay-core`'s own scope.
+(`src/ports/workflow-runs.ts`). Its required `serviceSecret` dependency is
+fail-closed: construction rejects values shorter than 32 characters, and every
+business request must present the exact value as `X-Service-Secret`.
 
-| Route | What it does |
-|---|---|
-| `POST /workflows/payment` | Validates the body against `paymentExecuteRequestedSchema`, optionally reads an `Idempotency-Key` header (see "De-duplicating a trigger" below), calls `WorkflowRuns.startPaymentExecute` (→ `inngest.send(...)`), returns `202 { eventId, statusUrl }` — always, whether or not the request deduplicated. |
-| `GET /workflows/:eventId` | Returns a `WorkflowRunSnapshot` — `status` (`queued`/`running`/`completed`/`failed`/`cancelled`), `runId`, timestamps, and `needsReview`/`failureMessage`. `404` if the engine doesn't recognize the id. |
-| `GET /ledger/entries?paymentId=…` or `?operationId=…` | Exactly one of the two query params, enforced by a Zod `.refine`. An empty result is `200 { entries: [] }`, never `404`. |
-| `GET /ledger/accounts/:account/balance?currency=EUR` | `:account` is `LedgerAccount`'s serialized form (`merchant:42`, `acquirer_clearing`), percent-decoded then parsed. |
-| `GET /healthz` | `200 { status: "ok" }`. |
+| Route | Authentication | What it does |
+|---|---|---|
+| `POST /workflows/payment` | `X-Service-Secret` required | Validates the body against `paymentExecuteRequestedSchema`, optionally reads an `Idempotency-Key` header (see "De-duplicating a trigger" below), calls `WorkflowRuns.startPaymentExecute` (→ `inngest.send(...)`), returns `202 { eventId, statusUrl }` — always, whether or not the request deduplicated. |
+| `GET /workflows/:eventId` | `X-Service-Secret` required | Returns a `WorkflowRunSnapshot` — `status` (`queued`/`running`/`completed`/`failed`/`cancelled`), `runId`, timestamps, and `needsReview`/`failureMessage`. `404` if the engine doesn't recognize the id. |
+| `GET /ledger/entries?paymentId=…` or `?operationId=…` | `X-Service-Secret` required | Exactly one of the two query params, enforced by a Zod `.refine`. An empty result is `200 { entries: [] }`, never `404`. |
+| `GET /ledger/accounts/:account/balance?currency=EUR` | `X-Service-Secret` required | `:account` is `LedgerAccount`'s serialized form (`merchant:42`, `acquirer_clearing`), percent-decoded then parsed. |
+| `GET /healthz` | No service secret | `200 { status: "ok" }`; public liveness exception. |
+| `GET`, `POST`, or `PUT /api/inngest` | No service secret; Inngest signing applies | SDK callback/registration endpoint. In cloud mode the Inngest handler verifies `INNGEST_SIGNING_KEY`; it is intentionally reachable independently of business-route authentication. |
 
 Errors follow the same envelope as `pay-core`: `{ error: { code, message, details? } }`
 (`src/adapters/http/server-error-mapper.ts`). One deliberate divergence from
@@ -582,13 +585,26 @@ See ADR-0010 for the full reasoning and the verified API quirks.
 ## Running the service
 
 ```bash
-docker compose up -d                          # from the monorepo root; postgres:17-alpine on :5433
-npx inngest-cli@latest dev                     # a local Inngest dev server on :8288
+# From the monorepo root, start only this process's dependencies.
+docker compose up -d postgres pay-core
+# The stock Compose command discovers the containerized durable-ledger name;
+# override only that callback URL so this Inngest container reaches the local process.
+docker compose run --detach --rm --service-ports \
+  inngest inngest dev --no-discovery \
+  -u http://host.docker.internal:3100/api/inngest
 
+export DURABLE_LEDGER_SERVICE_SECRET="$(openssl rand -hex 32)"
+pnpm --filter @apo/durable-ledger build
 DATABASE_URL=postgres://apo:apo@localhost:5433/apo \
 PAY_CORE_URL=http://localhost:3000 \
-pnpm --filter @apo/durable-ledger start        # after `pnpm --filter @apo/durable-ledger build`
+INNGEST_DEV=true \
+INNGEST_BASE_URL=http://localhost:8288 \
+pnpm --filter @apo/durable-ledger start
 ```
+
+The Inngest override above still uses the repository's pinned Compose image;
+it does not install or run a second CLI. `host.docker.internal` is the Docker
+Desktop hostname for the host process listening on the default `0.0.0.0:3100`.
 
 `main.ts` loads `config.ts`'s Zod-validated `AppConfig` from the environment,
 conditionally applies pending migrations (`MIGRATE_ON_BOOT`, default `true`),
@@ -596,13 +612,18 @@ builds the service via `createDurableLedger(...)` (`src/composition-root.ts`),
 and serves it with `@hono/node-server`, with the same SIGTERM/SIGINT
 graceful-shutdown-then-force-exit pattern as `pay-core`'s `main.ts`.
 
-Notable env vars beyond `DATABASE_URL`/`PAY_CORE_URL`/`PORT`/`HOST`: `INNGEST_DEV`
-(default `true` — talks to a local dev server with no keys required);
-`INNGEST_BASE_URL` (default `http://localhost:8288`); `INNGEST_SERVE_PATH`
-(default `/api/inngest` — where the Inngest dev server discovers and calls
-this service); `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` (required, and
-validated at boot via a `superRefine`, the moment `INNGEST_DEV=false` — i.e.
-Inngest Cloud). `createDurableLedger` builds `createPaymentExecuteFunction(...)`
+`DURABLE_LEDGER_SERVICE_SECRET` is required, must contain at least 32
+characters, and must match the value configured on every trusted client.
+`INNGEST_DEV` defaults to `true`. `INNGEST_BASE_URL` is an optional SDK-wide
+override: set it explicitly to `http://localhost:8288` for the local dev server,
+but omit it in cloud because Inngest v4 uses different default origins for its
+API/registration and event-ingestion traffic. `INNGEST_API_BASE_URL` is the
+separate origin used only by `InngestWorkflowRuns`: it may be omitted in local
+dev (where the workflow-runs adapter falls back to the dev base), and is
+required when `INNGEST_DEV=false` (normally `https://api.inngest.com`).
+`INNGEST_SERVE_PATH` defaults to `/api/inngest`; `INNGEST_SIGNING_KEY` and
+`INNGEST_EVENT_KEY` are also required and boot-validated in cloud mode.
+`createDurableLedger` builds `createPaymentExecuteFunction(...)`
 and passes it straight into `inngest/hono`'s `serve({ client, functions })`
 inline, in one expression — never through an intermediately-annotated
 variable, the same defensive shape `payment-execute.ts` uses, since that's
@@ -626,7 +647,7 @@ starts. The non-Docker instructions above remain the faster inner loop for
 local development.
 
 Two things worth knowing: the `inngest` service keeps its run history
-in-memory (no `--persist` volume, matching local `npx inngest-cli dev`
+in-memory (no `--persist` volume, matching the dev server's default
 behavior), so `docker compose down` discards it by design; and `/healthz`
 deliberately only checks this service's own liveness, not `pay-core`'s or
 Inngest's reachability — the same shallow contract as `pay-core`'s own

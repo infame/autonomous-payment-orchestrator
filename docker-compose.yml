@@ -80,6 +80,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://apo:apo@postgres:5432/apo
+      DURABLE_LEDGER_SERVICE_SECRET: ${DURABLE_LEDGER_SERVICE_SECRET:-local-dev-durable-ledger-secret-0001}
       PAY_CORE_URL: http://pay-core:3000
       PORT: "3100"
       INNGEST_DEV: "true"
@@ -114,11 +115,19 @@ services:
     environment:
       DATABASE_URL: postgres://apo:apo@postgres:5432/apo
       DURABLE_LEDGER_URL: http://durable-ledger:3100
-      # pm_demo_token is a placeholder value, not a real credential or a
-      # real token pattern — PAYMENT_METHOD_TOKEN is a required field with
-      # no meaningful default, so this just satisfies boot validation for
-      # local/demo use.
-      PAYMENT_METHOD_TOKEN: ${PAYMENT_METHOD_TOKEN:-pm_demo_token}
+      DURABLE_LEDGER_SERVICE_SECRET: ${DURABLE_LEDGER_SERVICE_SECRET:-local-dev-durable-ledger-secret-0001}
+      # sim.fail_then_succeed.1 is a pay-core simulator directive, not a real
+      # credential — PAYMENT_METHOD_TOKEN is a required field with no
+      # meaningful default, so this just satisfies boot validation while also
+      # making orchestra's demo scenario A (capture fails once, Inngest
+      # retries it — F3, docs/todo/05-orchestra.md §3) work out of the box
+      # with no manual env setup. See that spec's F3 for why the retry beat
+      # must come from `capture`, not `authorize`: `authorize`'s counter is
+      # keyed off this constant token, so only the FIRST workflow after a
+      # pay-core boot would ever see the authorize failure; `capture`'s
+      # counter embeds a fresh uuid per payment, so its fail-once-then-
+      # succeed is fresh on every run.
+      PAYMENT_METHOD_TOKEN: ${PAYMENT_METHOD_TOKEN:-sim.fail_then_succeed.1}
       PORT: "3200"
       LLM_MODE: ${LLM_MODE:-mock}
       # Deliberately a bare key (no `${ANTHROPIC_API_KEY:-}` default),
@@ -135,6 +144,92 @@ services:
     init: true
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3200/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  agent-orchestrator-live:
+    # Same build context/Dockerfile as the mock `agent-orchestrator` above —
+    # this is a SECOND instance of the identical image, booted with
+    # LLM_MODE=live instead of mock (ADR-0020: LLM_MODE is boot-time only,
+    # so a per-session live/mock switch needs a second already-booted
+    # process, not a runtime toggle).
+    build:
+      context: .
+      dockerfile: packages/agent-orchestrator/Dockerfile
+    # BEHIND a compose profile, not cosmetic: config.ts's superRefine
+    # rejects LLM_MODE=live with no ANTHROPIC_API_KEY, so an unprofiled live
+    # service would crash-loop on every plain `docker compose up` in the
+    # (default, keyless) environment `00-overview §5` requires as the public
+    # default. Only starts with `docker compose --profile live up`, and even
+    # then needs a real ANTHROPIC_API_KEY set on the host to actually boot.
+    profiles: ["live"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      durable-ledger:
+        condition: service_healthy
+      # Convenience AND correctness ordering: this instance sets
+      # MIGRATE_ON_BOOT=false below, so it depends on the mock instance
+      # having already migrated the shared `agent` schema — booting this
+      # instance without the mock one up first would find no `agent.intents`
+      # table.
+      agent-orchestrator:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://apo:apo@postgres:5432/apo
+      DURABLE_LEDGER_URL: http://durable-ledger:3100
+      DURABLE_LEDGER_SERVICE_SECRET: ${DURABLE_LEDGER_SERVICE_SECRET:-local-dev-durable-ledger-secret-0001}
+      PAYMENT_METHOD_TOKEN: ${PAYMENT_METHOD_TOKEN:-sim.fail_then_succeed.1}
+      PORT: "3201"
+      LLM_MODE: live
+      # Bare key, same reasoning as the mock instance's own ANTHROPIC_API_KEY
+      # comment above — do not "simplify" this to `${...:-}`.
+      ANTHROPIC_API_KEY:
+      # The mock instance above already migrates the shared `agent` schema
+      # on boot; running it here too would race two MIGRATE_ON_BOOT=true
+      # instances against the same migration journal on a cold start.
+      MIGRATE_ON_BOOT: "false"
+    # No published host port — this instance is reachable ONLY through the
+    # `orchestra` gateway's grant-gated proxy, never directly.
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3201/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  orchestra:
+    build:
+      context: .
+      dockerfile: packages/orchestra/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-orchestrator:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://apo:apo@postgres:5432/apo
+      AGENT_ORCHESTRATOR_URL: http://agent-orchestrator:3200
+      # A well-formed URL string only — no connectivity check at boot. Grants
+      # stay entirely inert (POST /internal/grant 404s) unless ADMIN_SECRET/
+      # GRANT_SIGNING_KEY/PUBLIC_BASE_URL are ALSO set (not by default here,
+      # so a plain `docker compose up` never exposes the grant endpoints).
+      AGENT_ORCHESTRATOR_LIVE_URL: http://agent-orchestrator-live:3201
+      # Bare pass-throughs preserve the default keyless/mock deployment while
+      # allowing an exported local live-profile configuration to reach the
+      # gateway unchanged. Config validation requires all three together.
+      ADMIN_SECRET:
+      GRANT_SIGNING_KEY:
+      PUBLIC_BASE_URL:
+      PORT: "3300"
+    ports:
+      - "3300:3300"
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3300/healthz || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10

@@ -1,0 +1,32 @@
+app = "replace-me-apo-orchestra"
+primary_region = "ord"
+
+[build]
+  dockerfile = "packages/orchestra/Dockerfile"
+
+[env]
+  PORT = "3300"
+  HOST = "0.0.0.0"
+  AGENT_ORCHESTRATOR_URL = "http://replace-me-apo-agent-mock.flycast:3200"
+  AGENT_ORCHESTRATOR_LIVE_URL = "http://replace-me-apo-agent-live.flycast:3200"
+  PUBLIC_BASE_URL = "https://replace-me-apo-orchestra.fly.dev"
+  MIGRATE_ON_BOOT = "true"
+
+[http_service]
+  internal_port = 3300
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"

@@ -32,6 +32,22 @@ describe("HttpDurableLedgerClient — happy paths", () => {
     await server.close();
   });
 
+  it("sends the configured service secret on every durable-ledger request", async () => {
+    const serviceSecret = "s".repeat(32);
+    const client = new HttpDurableLedgerClient({
+      baseUrl: server.baseUrl,
+      serviceSecret,
+    });
+
+    const { eventId } = await client.startPaymentWorkflow(REQUEST);
+    await client.getRunStatus(eventId);
+
+    expect(server.requests).toHaveLength(2);
+    for (const request of server.requests) {
+      expect(request.headers["X-Service-Secret"]).toBe(serviceSecret);
+    }
+  });
+
   it("startPaymentWorkflow sends POST /workflows/payment, Content-Type json, the exact body, and NO Idempotency-Key header", async () => {
     const client = new HttpDurableLedgerClient({ baseUrl: server.baseUrl });
     await client.startPaymentWorkflow(REQUEST);

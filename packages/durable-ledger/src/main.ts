@@ -40,12 +40,15 @@ async function main(): Promise<void> {
 
   const ledger = createDurableLedger({
     databaseUrl: cfg.DATABASE_URL,
+    serviceSecret: cfg.DURABLE_LEDGER_SERVICE_SECRET,
     payCoreUrl: cfg.PAY_CORE_URL,
     payCoreTimeoutMs: cfg.PAY_CORE_TIMEOUT_MS,
     inngest: {
       appId: cfg.INNGEST_APP_ID,
       isDev: cfg.INNGEST_DEV,
-      baseUrl: cfg.INNGEST_BASE_URL,
+      ...(cfg.INNGEST_BASE_URL !== undefined
+        ? { baseUrl: cfg.INNGEST_BASE_URL }
+        : {}),
       servePath: cfg.INNGEST_SERVE_PATH,
       ...(cfg.INNGEST_API_BASE_URL !== undefined
         ? { apiBaseUrl: cfg.INNGEST_API_BASE_URL }

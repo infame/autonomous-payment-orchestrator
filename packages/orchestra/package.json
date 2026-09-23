@@ -1,0 +1,38 @@
+{
+  "name": "@apo/orchestra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Head package: end-to-end demo CLI, a grant-gated gateway into live-LLM mode, and the project's front door.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "TEST_DATABASE_URL=${TEST_DATABASE_URL:-postgres://apo:apo@localhost:5433/apo_test} vitest run --config vitest.integration.config.ts",
+    "lint": "eslint src",
+    "start": "node dist/main.js",
+    "demo": "tsx src/demo/cli-main.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/adapters/persistence/drizzle/run-migrate.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.7",
+    "pg": "^8.23.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9.19.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

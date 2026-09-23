@@ -206,6 +206,7 @@ describe("createLlmClient", () => {
 describe("createAgentOrchestrator", () => {
   it("builds a working app against a lazily-connecting pg Pool (no live Postgres required)", async () => {
     const orchestrator = createAgentOrchestrator({
+      durableLedgerServiceSecret: "s".repeat(32),
       databaseUrl: "postgres://u:p@localhost:5432/db",
       durableLedgerUrl: "http://localhost:3100",
       paymentMethodToken: TOKEN,

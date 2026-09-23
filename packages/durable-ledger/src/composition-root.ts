@@ -19,13 +19,14 @@ import { createLedgerApp } from "./adapters/http/app.js";
 
 export interface CreateDurableLedgerOptions {
   readonly databaseUrl: string;
+  readonly serviceSecret: string;
   readonly payCoreUrl: string;
   readonly payCoreTimeoutMs?: number;
   readonly inngest: {
     readonly appId?: string;
     readonly isDev: boolean;
     readonly baseUrl?: string;
-    /** Falls back to `baseUrl` when unset — see `config.ts`'s `INNGEST_API_BASE_URL`. */
+    /** Falls back to `baseUrl` in dev mode; cloud deployments configure this explicitly while leaving `baseUrl` absent. */
     readonly apiBaseUrl?: string;
     readonly eventKey?: string;
     readonly signingKey?: string;
@@ -101,6 +102,7 @@ export function createDurableLedger(
   const app = createLedgerApp({
     ledger,
     runs,
+    serviceSecret: options.serviceSecret,
     inngestHandler: inngestServe({
       client: inngest,
       functions: [
@@ -133,16 +135,23 @@ export function createDurableLedger(
  * `payCore` is accepted anyway to keep this factory's option shape stable
  * against `createDurableLedger`'s — a future in-memory Inngest wiring (e.g.
  * against `@inngest/test`) would need it without changing every call site.
+ * Authentication is intentionally production-shaped: callers must provide
+ * a valid service secret, and this factory exposes no unauthenticated mode.
  */
 export function createInMemoryDurableLedger(options: {
   readonly payCore: PayCoreClient;
   readonly runs: WorkflowRuns;
+  readonly serviceSecret: string;
 }): {
   readonly app: Hono;
   readonly ledger: InMemoryLedgerRepository;
   readonly runs: WorkflowRuns;
 } {
   const ledger = new InMemoryLedgerRepository();
-  const app = createLedgerApp({ ledger, runs: options.runs });
+  const app = createLedgerApp({
+    ledger,
+    runs: options.runs,
+    serviceSecret: options.serviceSecret,
+  });
   return { app, ledger, runs: options.runs };
 }

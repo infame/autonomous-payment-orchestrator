@@ -10,6 +10,9 @@ import { z } from "zod";
 export const AppConfig = z
   .object({
     DATABASE_URL: z.string().min(1),
+    // Shared only with trusted service clients. Never use a z.enum here:
+    // invalid-value messages for secret-bearing fields must not echo values.
+    DURABLE_LEDGER_SERVICE_SECRET: z.string().min(32),
     PAY_CORE_URL: z.string().url(),
     PAY_CORE_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
     PORT: z.coerce.number().int().min(1).max(65535).default(3100),
@@ -19,8 +22,9 @@ export const AppConfig = z
       .enum(["true", "false", "1", "0"])
       .default("1")
       .transform((v) => v === "true" || v === "1"),
-    INNGEST_BASE_URL: z.string().url().default("http://localhost:8288"),
-    /** Optional; falls back to `INNGEST_BASE_URL` at the use-site (`composition-root.ts`), not here — a schema default would make the fallback indistinguishable from an explicit override. */
+    /** Optional SDK-wide override used only by the local dev server. Leave absent in cloud so the SDK keeps its separate cloud API/event defaults. */
+    INNGEST_BASE_URL: z.string().url().optional(),
+    /** Explicit REST API origin used by `InngestWorkflowRuns`; required in cloud mode because it is separate from the SDK client's event endpoint. */
     INNGEST_API_BASE_URL: z.string().url().optional(),
     INNGEST_SERVE_PATH: z.string().min(1).default("/api/inngest"),
     INNGEST_EVENT_KEY: z.string().min(1).optional(),
@@ -49,12 +53,19 @@ export const AppConfig = z
         message: "INNGEST_EVENT_KEY is required when INNGEST_DEV=false",
       });
     }
+    if (!cfg.INNGEST_DEV && cfg.INNGEST_API_BASE_URL === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["INNGEST_API_BASE_URL"],
+        message: "INNGEST_API_BASE_URL is required when INNGEST_DEV=false",
+      });
+    }
   });
 export type AppConfig = z.infer<typeof AppConfig>;
 
 /** Raised when process env fails to satisfy `AppConfig`. Never includes the
- * value of any variable in its message (`DATABASE_URL`/`INNGEST_SIGNING_KEY`
- * carry secrets) — only the field path and Zod's issue message, one issue
+ * value of any variable in its message (`DATABASE_URL`/
+ * `DURABLE_LEDGER_SERVICE_SECRET`/`INNGEST_SIGNING_KEY` carry secrets) — only the field path and Zod's issue message, one issue
  * per line. */
 export class ConfigError extends Error {
   constructor(message: string) {

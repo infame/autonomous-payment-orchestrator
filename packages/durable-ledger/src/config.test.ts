@@ -3,7 +3,14 @@ import { loadConfig, ConfigError } from "./config.js";
 
 const BASE_ENV = {
   DATABASE_URL: "postgres://apo:apo@localhost:5433/apo",
+  DURABLE_LEDGER_SERVICE_SECRET: "s".repeat(32),
   PAY_CORE_URL: "http://localhost:3000",
+};
+
+const CLOUD_INNGEST = {
+  INNGEST_SIGNING_KEY: "sk_test",
+  INNGEST_EVENT_KEY: "ek_test",
+  INNGEST_API_BASE_URL: "https://api.inngest.com",
 };
 
 describe("loadConfig", () => {
@@ -17,7 +24,7 @@ describe("loadConfig", () => {
     expect(cfg.HOST).toBe("0.0.0.0");
     expect(cfg.INNGEST_APP_ID).toBe("apo-durable-ledger");
     expect(cfg.INNGEST_DEV).toBe(true);
-    expect(cfg.INNGEST_BASE_URL).toBe("http://localhost:8288");
+    expect(cfg.INNGEST_BASE_URL).toBeUndefined();
     expect(cfg.INNGEST_API_BASE_URL).toBeUndefined();
     expect(cfg.INNGEST_SERVE_PATH).toBe("/api/inngest");
     expect(cfg.INNGEST_EVENT_KEY).toBeUndefined();
@@ -34,6 +41,7 @@ describe("loadConfig", () => {
       expect(err).toBeInstanceOf(ConfigError);
       const message = (err as ConfigError).message;
       expect(message).toContain("DATABASE_URL");
+      expect(message).toContain("DURABLE_LEDGER_SERVICE_SECRET");
       expect(message).toContain("PAY_CORE_URL");
     }
   });
@@ -55,16 +63,14 @@ describe("loadConfig", () => {
       loadConfig({
         ...BASE_ENV,
         INNGEST_DEV: "0",
-        INNGEST_SIGNING_KEY: "sk_test",
-        INNGEST_EVENT_KEY: "ek_test",
+        ...CLOUD_INNGEST,
       }).INNGEST_DEV,
     ).toBe(false);
     expect(
       loadConfig({
         ...BASE_ENV,
         INNGEST_DEV: "false",
-        INNGEST_SIGNING_KEY: "sk_test",
-        INNGEST_EVENT_KEY: "ek_test",
+        ...CLOUD_INNGEST,
       }).INNGEST_DEV,
     ).toBe(false);
   });
@@ -81,6 +87,7 @@ describe("loadConfig", () => {
         ...BASE_ENV,
         INNGEST_DEV: "false",
         INNGEST_EVENT_KEY: "ek_test",
+        INNGEST_API_BASE_URL: CLOUD_INNGEST.INNGEST_API_BASE_URL,
       });
       throw new Error("expected loadConfig to throw");
     } catch (err) {
@@ -95,6 +102,7 @@ describe("loadConfig", () => {
         ...BASE_ENV,
         INNGEST_DEV: "false",
         INNGEST_SIGNING_KEY: "sk_test",
+        INNGEST_API_BASE_URL: CLOUD_INNGEST.INNGEST_API_BASE_URL,
       });
       throw new Error("expected loadConfig to throw");
     } catch (err) {
@@ -103,16 +111,28 @@ describe("loadConfig", () => {
     }
   });
 
-  it("accepts INNGEST_DEV=false when both keys are set", () => {
+  it("accepts cloud mode with keys and a separate workflow-runs API URL while leaving the SDK base override absent", () => {
     const cfg = loadConfig({
       ...BASE_ENV,
       INNGEST_DEV: "false",
-      INNGEST_SIGNING_KEY: "sk_test",
-      INNGEST_EVENT_KEY: "ek_test",
+      ...CLOUD_INNGEST,
     });
     expect(cfg.INNGEST_DEV).toBe(false);
     expect(cfg.INNGEST_SIGNING_KEY).toBe("sk_test");
     expect(cfg.INNGEST_EVENT_KEY).toBe("ek_test");
+    expect(cfg.INNGEST_BASE_URL).toBeUndefined();
+    expect(cfg.INNGEST_API_BASE_URL).toBe("https://api.inngest.com");
+  });
+
+  it("requires the separate workflow-runs API URL in cloud mode", () => {
+    expect(() =>
+      loadConfig({
+        ...BASE_ENV,
+        INNGEST_DEV: "false",
+        INNGEST_SIGNING_KEY: "sk_test",
+        INNGEST_EVENT_KEY: "ek_test",
+      }),
+    ).toThrow(/INNGEST_API_BASE_URL/);
   });
 
   it("does not require either Inngest key when INNGEST_DEV is left at its default (dev mode)", () => {
@@ -161,8 +181,11 @@ describe("loadConfig", () => {
   it("defaults to process.env when no env argument is passed", () => {
     const previousDb = process.env.DATABASE_URL;
     const previousPayCore = process.env.PAY_CORE_URL;
+    const previousServiceSecret = process.env.DURABLE_LEDGER_SERVICE_SECRET;
     process.env.DATABASE_URL = BASE_ENV.DATABASE_URL;
     process.env.PAY_CORE_URL = BASE_ENV.PAY_CORE_URL;
+    process.env.DURABLE_LEDGER_SERVICE_SECRET =
+      BASE_ENV.DURABLE_LEDGER_SERVICE_SECRET;
     try {
       const cfg = loadConfig();
       expect(cfg.DATABASE_URL).toBe(BASE_ENV.DATABASE_URL);
@@ -177,6 +200,11 @@ describe("loadConfig", () => {
         delete process.env.PAY_CORE_URL;
       } else {
         process.env.PAY_CORE_URL = previousPayCore;
+      }
+      if (previousServiceSecret === undefined) {
+        delete process.env.DURABLE_LEDGER_SERVICE_SECRET;
+      } else {
+        process.env.DURABLE_LEDGER_SERVICE_SECRET = previousServiceSecret;
       }
     }
   });

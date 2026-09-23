@@ -47,7 +47,9 @@ boot the service:
 4. **`src/ports/agent-core-client.ts` + `src/adapters/http/durable-ledger-client.ts`**
    — the `AgentCoreClient` port and `HttpDurableLedgerClient`,
    a typed HTTP client to `durable-ledger`'s `POST /workflows/payment` and
-   `GET /workflows/:eventId`. See below for what this step is and isn't.
+   `GET /workflows/:eventId`. Every request sends the configured
+   `DURABLE_LEDGER_SERVICE_SECRET` as `X-Service-Secret`. See below for what
+   this step is and isn't.
 5. **`src/ports/intent-repository.ts` + `src/adapters/persistence/drizzle/`
    + `src/adapters/memory/` (this step)** — the `IntentRepository` port,
    its own `agent` Postgres schema/migration, `PgIntentRepository`, and
@@ -824,8 +826,10 @@ already have one of.
 docker compose up -d postgres                 # from the monorepo root; postgres:17-alpine on :5433
 # in another terminal, or already running: durable-ledger itself (see its own README)
 
+export DURABLE_LEDGER_SERVICE_SECRET="<same 32+-character value used by durable-ledger>"
 DATABASE_URL=postgres://apo:apo@localhost:5433/apo \
 DURABLE_LEDGER_URL=http://localhost:3100 \
+DURABLE_LEDGER_SERVICE_SECRET="$DURABLE_LEDGER_SERVICE_SECRET" \
 PAYMENT_METHOD_TOKEN=pm_demo_token \
 pnpm --filter @apo/agent-orchestrator start   # after `pnpm --filter @apo/agent-orchestrator build`
 ```
@@ -837,8 +841,11 @@ conditionally applies pending migrations (`MIGRATE_ON_BOOT`, default
 the same SIGTERM/SIGINT graceful-shutdown-then-force-exit pattern as
 `pay-core`'s and `durable-ledger`'s own `main.ts`.
 
-Notable env vars beyond `DATABASE_URL`/`DURABLE_LEDGER_URL`/
-`PAYMENT_METHOD_TOKEN`/`PORT`/`HOST`:
+Required service configuration also includes
+`DURABLE_LEDGER_SERVICE_SECRET`: a 32+-character value shared with
+durable-ledger and sent as `X-Service-Secret` on workflow start/status calls.
+The process refuses to boot without it. Other notable env vars beyond
+`DATABASE_URL`/`DURABLE_LEDGER_URL`/`PAYMENT_METHOD_TOKEN`/`PORT`/`HOST`:
 
 - `LLM_MODE` — `mock` (default) or `live`. `mock` needs no API key at all —
   `main.ts` builds `MockLlmClient` and the service is fully runnable without

@@ -57,6 +57,9 @@ export const AppConfig = z
     LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
     DURABLE_LEDGER_URL: z.string().url(),
+    // Required for every durable-ledger business request. Never a z.enum:
+    // configuration errors must not echo a secret value.
+    DURABLE_LEDGER_SERVICE_SECRET: z.string().min(32),
     DURABLE_LEDGER_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -168,8 +171,8 @@ export type AppConfig = z.infer<typeof AppConfig>;
 
 /** Raised when process env fails to satisfy `AppConfig`. Never includes the
  * value of any variable in its message (`DATABASE_URL`/`ANTHROPIC_API_KEY`/
- * `PAYMENT_METHOD_TOKEN` carry secrets) — only the field path and Zod's
- * issue message, one issue per line. This is also why none of those three
+ * `DURABLE_LEDGER_SERVICE_SECRET`/`PAYMENT_METHOD_TOKEN` carry secrets) — only the field path and Zod's
+ * issue message, one issue per line. This is also why none of those
  * fields is ever a `z.enum`: a `z.enum`'s own invalid-value error message
  * echoes the received value verbatim (e.g. `"received 'yes'"`), which would
  * leak a secret straight into a `ConfigError` message. `LLM_MODE` and

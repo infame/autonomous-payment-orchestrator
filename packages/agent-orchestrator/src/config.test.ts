@@ -4,6 +4,7 @@ import { loadConfig, ConfigError } from "./config.js";
 const BASE_ENV = {
   DATABASE_URL: "postgres://apo:apo@localhost:5433/apo",
   DURABLE_LEDGER_URL: "http://localhost:3100",
+  DURABLE_LEDGER_SERVICE_SECRET: "s".repeat(32),
   PAYMENT_METHOD_TOKEN: "pm_demo_token",
 };
 
@@ -13,6 +14,9 @@ describe("loadConfig", () => {
 
     expect(cfg.DATABASE_URL).toBe(BASE_ENV.DATABASE_URL);
     expect(cfg.DURABLE_LEDGER_URL).toBe(BASE_ENV.DURABLE_LEDGER_URL);
+    expect(cfg.DURABLE_LEDGER_SERVICE_SECRET).toBe(
+      BASE_ENV.DURABLE_LEDGER_SERVICE_SECRET,
+    );
     expect(cfg.PAYMENT_METHOD_TOKEN).toBe(BASE_ENV.PAYMENT_METHOD_TOKEN);
     expect(cfg.PORT).toBe(3200);
     expect(cfg.HOST).toBe("0.0.0.0");
@@ -31,7 +35,7 @@ describe("loadConfig", () => {
     expect(cfg.SHUTDOWN_TIMEOUT_MS).toBe(10_000);
   });
 
-  it("throws a ConfigError naming all 3 missing required vars in one message", () => {
+  it("throws a ConfigError naming all missing required vars in one message", () => {
     try {
       loadConfig({});
       throw new Error("expected loadConfig to throw");
@@ -40,6 +44,7 @@ describe("loadConfig", () => {
       const message = (err as ConfigError).message;
       expect(message).toContain("DATABASE_URL");
       expect(message).toContain("DURABLE_LEDGER_URL");
+      expect(message).toContain("DURABLE_LEDGER_SERVICE_SECRET");
       expect(message).toContain("PAYMENT_METHOD_TOKEN");
     }
   });
@@ -269,6 +274,8 @@ describe("loadConfig", () => {
     const previous = { ...process.env };
     process.env.DATABASE_URL = BASE_ENV.DATABASE_URL;
     process.env.DURABLE_LEDGER_URL = BASE_ENV.DURABLE_LEDGER_URL;
+    process.env.DURABLE_LEDGER_SERVICE_SECRET =
+      BASE_ENV.DURABLE_LEDGER_SERVICE_SECRET;
     process.env.PAYMENT_METHOD_TOKEN = BASE_ENV.PAYMENT_METHOD_TOKEN;
     try {
       const cfg = loadConfig();
@@ -279,6 +286,7 @@ describe("loadConfig", () => {
       for (const key of [
         "DATABASE_URL",
         "DURABLE_LEDGER_URL",
+        "DURABLE_LEDGER_SERVICE_SECRET",
         "PAYMENT_METHOD_TOKEN",
       ]) {
         if (previous[key] === undefined) {
