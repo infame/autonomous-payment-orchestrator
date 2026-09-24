@@ -27,3 +27,5 @@
 - [agent-evals fuzz decisions](agent-evals-fuzz-decisions.md) — fast-check rejected, replay key is seed+index, fuzz must not re-derive the open TOCTOU, fuzz excluded from guardrailCatchRate.
 - [agent-evals live-mode decisions](agent-evals-live-mode-decisions.md) — no Anthropic SDK dep (use createLlmClient), live ignores scenario.llm, measured budget math, reports/ is gitignored.
 - [agent-evals DoD mutation sweep](agent-evals-dod-mutation-sweep.md) — why only a dist mutation turns an oracle red, the I1–I8 disable matrix, spec §10's "8 categories" reading, TOCTOU accepted via ADR-0019.
+- [orchestra demo reachability](orchestra-demo-reachability.md) — the saga/compensation beat is unreachable live; fail_then_succeed's authorize retry fires once per pay-core boot; the "invoice 42" grounding trap.
+- [orchestra live-grant design](orchestra-live-grant-design.md) — LLM_MODE is boot-time, so live needs a 2nd orchestrator instance behind an orchestra gateway; the exact 2-route attempt budget is an upper bound on inference calls.
