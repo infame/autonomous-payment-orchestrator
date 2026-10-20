@@ -4,6 +4,33 @@ These files describe a five-app Fly.io topology. They contain valid-looking,
 deliberately non-live `replace-me-*` app names. This repository does not create
 cloud resources, set credentials, run migrations, or deploy from this branch.
 
+## Portfolio visitor endpoint
+
+Use a dedicated HTTPS subdomain (for example `payments.example.com`) whose
+root routes to the orchestra gateway on port 3300. Set `PUBLIC_BASE_URL` to
+that HTTPS origin. The UI uses root-relative routes and cannot currently be
+mounted in a folder such as `/payments/`. Hosted demos require HTTPS and
+retain Secure cookies. Only the unsigned customer cookie omits Secure for
+HTTP requests to exact loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) so
+local mock sessions also work with Safari's strict cookie policy. Live-grant
+cookies always stay Secure; use HTTPS for browser live mode.
+
+Share only the gateway homepage with visitors. Its four failure challenges
+exercise ten repeat deliveries, temporary provider failures, an unsupported
+assistant amount, and a permanent authorization decline. Challenges use mock
+reasoning and a simulated provider, with no real money moved. They are
+unavailable in live mode. The source, proposal, policy reason, actual payment
+snapshot, ledger entries, and delivery receipts stay in one same-page lab. Partial JSON polling is bounded to 60 checks
+at 1.5-second intervals; visitors can manually check state after a pause or
+error. Preserve the public Host through your reverse proxy so internal
+loopback routing cannot select the local cookie exception.
+
+Do not expose the local Inngest dev console (8288), PostgreSQL, orchestrators,
+or pay-core. The managed Inngest callback exception below is an operator
+integration, not a visitor page. The console shows best-effort recorded calls and exact capture ledger entries.
+Inngest owns status; durable-ledger owns observations and ledger proof. Missing
+records are explicit and never change payment behavior.
+
 ## Topology and prerequisites
 
 - `orchestra` is the browser/API entry point and the only app intended for
@@ -102,8 +129,9 @@ release, verify:
 
 1. each machine is healthy in `fly status -a <app-name>`;
 2. `GET https://<orchestra-app>.fly.dev/healthz` returns `200`;
-3. the home page says mock mode and a form submit reaches an intent detail
-   page;
+3. the homepage identifies the simulator and all four challenges run without
+   leaving the page; repeat delivery returns ten actual receipts with the same
+   payment identity and two unchanged ledger entry IDs;
 4. Inngest shows the durable app registered, events arriving, and its signed
    callback healthy;
 5. an operator-minted live grant routes one bounded call to agent-live, then
@@ -142,3 +170,38 @@ sleep/wake behavior differs by plan, so verify cold-start behavior explicitly;
 if private-service wake-on-
 request is unavailable, keep one replica running rather than changing runtime
 timeouts. No Railway project or config is created in this branch.
+
+## Optional simulated resend
+
+`DEMO_RESEND_ENABLED` defaults to false in both durable-ledger and agent.
+For an explicitly simulated deployment, enable it at both services. Live
+agent composition blocks resend regardless of the flag. Never enable it with
+a real provider. Local compose enables it for its simulator.
+
+The visitor submits only an intent ID. Agent checks customer ownership before
+calling durable-ledger. Durable-ledger requires authoritative Inngest Completed
+status plus the canonical capture group at the deterministic posting operation.
+It resends the original capture body/key and the same stored posting drafts.
+No new workflow is created. The UI reports actual responses and entry IDs.
+
+The `ledger.execution_attempts` migration belongs to durable-ledger. Its
+separate two-connection observation pool has bounded acquisition/query/SQL
+timeouts; journal failures are best effort and do not alter retries or
+compensation. Run existing migrations before new service code starts.
+
+## Failure-lab opt-in and profile migration
+
+The four fixed challenges additionally require `DEMO_CHALLENGES_ENABLED=true`
+on the mock agent. Live composition refuses challenges and assigned profiles,
+even if opted in. `DEMO_RESEND_ENABLED` remains independently required at agent
+and durable-ledger for exact resend/batch behavior. Defaults are off; only
+local simulator compose enables these controls automatically.
+
+Agent owns the nullable immutable `agent.intents.execution_profile` migration,
+atomic metadata write and credential resolver. Apply the new agent migration
+before code serves challenges. Durable-ledger owns actual provider IO, safe
+snapshot projection, recording and exact completed replay; no journal schema
+change is needed for this extension. Unique intent-suffixed opaque simulator
+credentials isolate fault counters between visitors and survive agent restart
+through stored profile metadata. Simulator process resets still reset provider
+counters and must not be presented as a stable external-provider guarantee.

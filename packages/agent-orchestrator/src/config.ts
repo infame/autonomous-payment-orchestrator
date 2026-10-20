@@ -18,6 +18,14 @@ const CURRENCY_CODE = /^[A-Z]{3}$/;
  */
 export const AppConfig = z
   .object({
+    DEMO_CHALLENGES_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
+    DEMO_RESEND_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
     DATABASE_URL: z.string().min(1),
     PORT: z.coerce.number().int().min(1).max(65535).default(3200),
     HOST: z.string().min(1).default("0.0.0.0"),

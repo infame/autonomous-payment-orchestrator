@@ -64,3 +64,14 @@ export class LedgerImbalanceError extends LedgerError {
     );
   }
 }
+
+/** Safe execution inspection/replay boundary failure; no request body attached. */
+export class ExecutionEvidenceError extends LedgerError {
+  constructor(
+    readonly status: 404 | 409,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}

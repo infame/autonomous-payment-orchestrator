@@ -1,5 +1,6 @@
+import { Intent } from "./domain/intent.js";
 import { inspect } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createAgentOrchestrator,
   createInMemoryAgentOrchestrator,
@@ -217,6 +218,57 @@ describe("createAgentOrchestrator", () => {
       expect(res.status).toBe(200);
       expect(orchestrator.llm.name).toBe("mock");
     } finally {
+      await orchestrator.close();
+    }
+  });
+});
+
+describe("live resend safety", () => {
+  it("keeps resend disabled in live composition even with explicit opt-in", async () => {
+    const orchestrator = createAgentOrchestrator({
+      databaseUrl: "postgres://u:p@localhost:5432/db",
+      durableLedgerServiceSecret: "s".repeat(32),
+      durableLedgerUrl: "http://localhost:3100",
+      paymentMethodToken: TOKEN,
+      demoResendEnabled: true,
+      demoChallengesEnabled: true,
+      llm: { mode: "live", apiKey: CANARY_API_KEY, model: "claude-sonnet-5" },
+    });
+    const intent = Intent.fromState({
+      id: "5e76fb28-b2d5-4f10-a6a5-d644a7b09619",
+      customerId: "owner",
+      text: ALLOW_TEXT,
+      status: "completed",
+      proposal: null,
+      policyVerdict: null,
+      durableLedgerEventId: "event",
+      clarificationAnswer: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    vi.spyOn(orchestrator.intents, "findById").mockResolvedValue({
+      intent,
+      version: 0,
+    });
+    try {
+      const response = await orchestrator.app.request(
+        `/intents/${intent.id}/resend`,
+        { method: "POST", headers: { "X-Customer-Id": "owner" } },
+      );
+      expect(response.status).toBe(404);
+      const challenge = await orchestrator.app.request("/demo/challenges", {
+        method: "POST",
+        headers: {
+          "X-Customer-Id": "owner",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ scenario: "duplicates" }),
+      });
+      expect(challenge.status).toBe(404);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
       await orchestrator.close();
     }
   });

@@ -721,3 +721,47 @@ the full rationale.
       /workflows/payment`, forwarded to Inngest as its event dedup id —
       discovered while planning `agent-orchestrator`'s `ApproveIntent`
       (ADR-0013)
+
+## Execution evidence and simulator resend
+
+Service-secret-protected `GET /workflows/:eventId/evidence` combines Inngest
+status, best-effort recorded attempts, and entries at
+`stepOperationId(runId, 'post-ledger')`. Empty Inngest REST output is normal;
+status remains authoritative while completed proof comes from the ledger.
+A valid proof has exactly two matching capture entries: clearing debit and
+merchant credit, equal positive integer amount/currency/payment, no reversal.
+Other payment operations are never included in this query.
+
+`POST /workflows/:eventId/resend` is disabled unless `DEMO_RESEND_ENABLED=true`
+explicitly declares a simulator deployment. Before any effect it requires
+Completed status and validates the exact canonical stored group. It derives
+`stepIdempotencyKey(runId, 'capture')`, sends the original `{paymentId}` body
+without an amount field, then reconstructs the same posting operation/drafts.
+It returns actual capture output and stored original/returned entry IDs/counts.
+No new event or workflow is created. Provider cache resets are not hidden.
+
+`ledger.execution_attempts` stores only sanitized correlation, timestamps and
+request outcomes. Recording runs inside actual step callbacks; workflow memo
+replays do not create new request observations. A start without finalization
+has an unknown outcome. The dedicated pool is capped at two connections with
+100ms acquisition/query/statement timeouts; each recording stage is additionally
+bounded at 150ms and swallowed independently from business failures. Missing or
+failed observations must never change payment retries, success or compensation.
+The journal query states availability and does not promise completeness.
+
+### Safe authoritative payment projection
+
+Execution evidence includes `payment: {source: 'pay-core', availability,
+snapshot}`. The projection whitelists payment ID/status, currency, authorized,
+captured and refunded amounts, excluding provider references, raw failures,
+credentials and bodies. Correlation uses canonical ledger proof or one unique
+payment ID in the trusted run's journal. Missing/unavailable/ambiguous journal
+or failed payment reads leave the outcome explicitly unknown. A permanently
+declined authorization can therefore show its actual failed payment record
+and zero captured amount without pretending no payment record was created.
+
+Completed resend handlers have an independent short deadline and propagate
+signals/timeouts through Inngest reads and pay-core calls. An agent batch can
+stop waiting earlier; unconfirmed outcomes stay unknown. No new effects are
+started after the handler's deadline check. An already-started ledger operation
+may finish later and remains governed by its original idempotent operation ID.

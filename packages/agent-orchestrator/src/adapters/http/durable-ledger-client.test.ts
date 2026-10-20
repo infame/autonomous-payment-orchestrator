@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentCoreBadRequestError,
   AgentCoreMalformedResponseError,
@@ -599,4 +599,25 @@ describe("HttpDurableLedgerClient — error classification against the fake wire
       return true;
     });
   });
+});
+
+describe("execution evidence response validation", () => {
+  afterEach(() => vi.restoreAllMocks());
+  it.each(["getExecutionEvidence", "resendExecution"] as const)(
+    "rejects malformed %s responses at the HTTP boundary",
+    async (method) => {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(
+          JSON.stringify({ resendAvailable: true, ledger: { entries: [] } }),
+        ),
+      );
+      const client = new HttpDurableLedgerClient({
+        baseUrl: "http://durable.test",
+        serviceSecret: "s".repeat(32),
+      });
+      await expect(client[method]("event")).rejects.toBeInstanceOf(
+        AgentCoreMalformedResponseError,
+      );
+    },
+  );
 });

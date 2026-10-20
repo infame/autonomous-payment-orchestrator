@@ -21,7 +21,7 @@
  * and decides what to do with a `null` field itself.
  */
 
-export type AmountSelector = "min" | "max" | "ungrounded";
+export type AmountSelector = "min" | "max" | "ungrounded" | "inflated";
 
 export type MockOutcome =
   | { readonly kind: "payment"; readonly selector: AmountSelector }
@@ -94,7 +94,10 @@ export function parseDirectives(text: string): ParsedDirectives {
       case "amount":
         if (
           amountSelector === null &&
-          (arg === "min" || arg === "max" || arg === "ungrounded")
+          (arg === "min" ||
+            arg === "max" ||
+            arg === "ungrounded" ||
+            arg === "inflated")
         ) {
           amountSelector = arg;
         }

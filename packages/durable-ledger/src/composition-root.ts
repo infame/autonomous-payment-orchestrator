@@ -1,3 +1,4 @@
+import { PgExecutionJournal } from "./adapters/persistence/drizzle/pg-execution-journal.js";
 import type { Hono } from "hono";
 import { serve as inngestServe } from "inngest/hono";
 import {
@@ -18,6 +19,7 @@ import type { DecideRetryOptions } from "./workflow/retry-policy.js";
 import { createLedgerApp } from "./adapters/http/app.js";
 
 export interface CreateDurableLedgerOptions {
+  readonly demoResendEnabled?: boolean;
   readonly databaseUrl: string;
   readonly serviceSecret: string;
   readonly payCoreUrl: string;
@@ -63,6 +65,7 @@ export function createDurableLedger(
   const pool: PgPool = createPool(options.databaseUrl);
   const db = createDb(pool);
   const ledger = new PgLedgerRepository(db);
+  const journal = new PgExecutionJournal(options.databaseUrl);
 
   const payCore = new HttpPayCoreClient({
     baseUrl: options.payCoreUrl,
@@ -102,6 +105,9 @@ export function createDurableLedger(
   const app = createLedgerApp({
     ledger,
     runs,
+    journal,
+    payCore,
+    demoResendEnabled: options.demoResendEnabled === true,
     serviceSecret: options.serviceSecret,
     inngestHandler: inngestServe({
       client: inngest,
@@ -110,6 +116,7 @@ export function createDurableLedger(
           inngest,
           payCore,
           ledger,
+          journal,
           ...(options.retry !== undefined ? { retry: options.retry } : {}),
         }),
       ],
@@ -123,7 +130,9 @@ export function createDurableLedger(
     app,
     ledger,
     runs,
-    close: () => pool.end(),
+    close: async () => {
+      await Promise.all([pool.end(), journal.close()]);
+    },
   };
 }
 

@@ -1224,3 +1224,98 @@ describe("createAgentOrchestratorApp", () => {
     });
   });
 });
+
+describe("execution evidence customer boundary", () => {
+  const view = {
+    id: "5e76fb28-b2d5-4f10-a6a5-d644a7b09619",
+    customerId: "owner",
+    text: NEEDS_APPROVAL_TEXT,
+    status: "completed" as const,
+    proposal: null,
+    policyVerdict: null,
+    durableLedgerEventId: "event-owner",
+    clarificationAnswer: null,
+    createdAt: FIXED_CLOCK(),
+    updatedAt: FIXED_CLOCK(),
+  };
+  it.each(["evidence", "resend"])(
+    "checks ownership before downstream %s",
+    async (action) => {
+      const downstream = Object.assign(new FakeAgentCoreClient(), {
+        getExecutionEvidence: vi.fn(),
+        resendExecution: vi.fn(),
+      });
+      const { app } = buildApp({
+        getIntent: { execute: vi.fn().mockResolvedValue(view) },
+        executionClient: downstream,
+        demoResendEnabled: true,
+      });
+      const response = await app.request(`/intents/${view.id}/${action}`, {
+        method: action === "resend" ? "POST" : "GET",
+        headers: { "X-Customer-Id": "intruder" },
+      });
+      expect(response.status).toBe(404);
+      expect(downstream.getExecutionEvidence).not.toHaveBeenCalled();
+      expect(downstream.resendExecution).not.toHaveBeenCalled();
+    },
+  );
+  it("fails closed when resend is disabled before downstream effects", async () => {
+    const downstream = Object.assign(new FakeAgentCoreClient(), {
+      resendExecution: vi.fn(),
+    });
+    const { app } = buildApp({
+      getIntent: { execute: vi.fn().mockResolvedValue(view) },
+      executionClient: downstream,
+      demoResendEnabled: false,
+    });
+    expect(
+      (await post(app, `/intents/${view.id}/resend`, { customerId: "owner" }))
+        .status,
+    ).toBe(404);
+    expect(downstream.resendExecution).not.toHaveBeenCalled();
+  });
+  it("uses only the owned stored event, ignoring browser-selected payment and key", async () => {
+    const downstream = Object.assign(new FakeAgentCoreClient(), {
+      resendExecution: vi.fn().mockResolvedValue({ unchangedEntries: true }),
+    });
+    const { app } = buildApp({
+      getIntent: { execute: vi.fn().mockResolvedValue(view) },
+      executionClient: downstream,
+      demoResendEnabled: true,
+    });
+    expect(
+      (
+        await post(app, `/intents/${view.id}/resend`, {
+          customerId: "owner",
+          body: { paymentId: "other", idempotencyKey: "attacker" },
+        })
+      ).status,
+    ).toBe(200);
+    expect(downstream.resendExecution).toHaveBeenCalledExactlyOnceWith(
+      "event-owner",
+    );
+  });
+  it("returns no execution for a request that has not started a workflow", async () => {
+    const downstream = Object.assign(new FakeAgentCoreClient(), {
+      getExecutionEvidence: vi.fn(),
+    });
+    const { app } = buildApp({
+      getIntent: {
+        execute: vi
+          .fn()
+          .mockResolvedValue({
+            ...view,
+            status: "needs_approval",
+            durableLedgerEventId: null,
+          }),
+      },
+      executionClient: downstream,
+    });
+    expect(
+      await (
+        await get(app, `/intents/${view.id}/evidence`, { customerId: "owner" })
+      ).json(),
+    ).toEqual({ evidence: null });
+    expect(downstream.getExecutionEvidence).not.toHaveBeenCalled();
+  });
+});

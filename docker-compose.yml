@@ -81,6 +81,7 @@ services:
     environment:
       DATABASE_URL: postgres://apo:apo@postgres:5432/apo
       DURABLE_LEDGER_SERVICE_SECRET: ${DURABLE_LEDGER_SERVICE_SECRET:-local-dev-durable-ledger-secret-0001}
+      DEMO_RESEND_ENABLED: "true" # Local simulator only; deployed default is false.
       PAY_CORE_URL: http://pay-core:3000
       PORT: "3100"
       INNGEST_DEV: "true"
@@ -129,6 +130,8 @@ services:
       # succeed is fresh on every run.
       PAYMENT_METHOD_TOKEN: ${PAYMENT_METHOD_TOKEN:-sim.fail_then_succeed.1}
       PORT: "3200"
+      DEMO_RESEND_ENABLED: "true" # Composition still disables replay for live reasoning.
+      DEMO_CHALLENGES_ENABLED: "true" # Isolated fixed simulator profiles; live mode still refuses.
       LLM_MODE: ${LLM_MODE:-mock}
       # Deliberately a bare key (no `${ANTHROPIC_API_KEY:-}` default),
       # empirically verified against this Compose engine: a bare key passes

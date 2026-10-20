@@ -1,3 +1,5 @@
+import { RunDemoChallenge } from "./app/run-demo-challenge.js";
+import { DemoExecutionCredentials } from "./adapters/simulation/demo-execution-credentials.js";
 import type { Hono } from "hono";
 import {
   createPool,
@@ -80,6 +82,8 @@ export function createLlmClient(options: LlmOptions): LlmClient {
 }
 
 export interface CreateAgentOrchestratorOptions {
+  readonly demoResendEnabled?: boolean;
+  readonly demoChallengesEnabled?: boolean;
   readonly databaseUrl: string;
   readonly durableLedgerUrl: string;
   readonly durableLedgerServiceSecret: string;
@@ -114,7 +118,10 @@ function buildApp(
   policy: PolicyConfig,
   clock: () => Date,
   paymentMethodToken: string,
+  demoResendEnabled = false,
+  demoChallengesEnabled = false,
 ): Hono {
+  const credentials = new DemoExecutionCredentials(demoChallengesEnabled);
   const submitIntent = new SubmitIntent(intents, llm, policy, clock);
   const getIntent = new GetIntent(intents);
   const answerClarification = new AnswerClarification(
@@ -128,6 +135,7 @@ function buildApp(
     agentCore,
     paymentMethodToken,
     clock,
+    credentials,
   );
   const autoApproveIntent = new AutoApproveIntent(
     intents,
@@ -135,6 +143,7 @@ function buildApp(
     paymentMethodToken,
     policy,
     clock,
+    credentials,
   );
   const rejectIntent = new RejectIntent(intents, clock);
   const syncIntentExecution = new SyncIntentExecution(
@@ -144,6 +153,17 @@ function buildApp(
   );
 
   return createAgentOrchestratorApp({
+    runDemoChallenge: new RunDemoChallenge(
+      intents,
+      llm,
+      policy,
+      approveIntent,
+      autoApproveIntent,
+      demoChallengesEnabled,
+      clock,
+    ),
+    executionClient: agentCore,
+    demoResendEnabled,
     submitIntent,
     getIntent,
     answerClarification,
@@ -199,6 +219,8 @@ export function createAgentOrchestrator(
     policy,
     clock,
     options.paymentMethodToken,
+    options.demoResendEnabled === true && options.llm.mode === "mock",
+    options.demoChallengesEnabled === true && options.llm.mode === "mock",
   );
 
   return {
@@ -212,6 +234,8 @@ export function createAgentOrchestrator(
 }
 
 export interface CreateInMemoryAgentOrchestratorOptions {
+  readonly demoChallengesEnabled?: boolean;
+  readonly demoResendEnabled?: boolean;
   /** Required, no default/fake shipped — a caller supplies its own `AgentCoreClient` double (e.g. `FakeAgentCoreClient`, test-only). */
   readonly agentCore: AgentCoreClient;
   /** Defaults to `new MockLlmClient()` when omitted. */
@@ -249,6 +273,8 @@ export function createInMemoryAgentOrchestrator(
     policy,
     clock,
     options.paymentMethodToken,
+    options.demoResendEnabled === true && llm.name === "mock",
+    options.demoChallengesEnabled === true && llm.name === "mock",
   );
 
   return { app, intents, llm, agentCore: options.agentCore, policy };

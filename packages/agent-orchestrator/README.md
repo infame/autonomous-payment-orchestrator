@@ -975,3 +975,45 @@ pnpm --filter @apo/agent-orchestrator test:integration # applies migrations to a
       `durable-ledger`'s healthcheck, and a `docker images build` step in
       the monorepo CI workflow (`.github/workflows/ci.yml`)
 - [x] Also consumed as a library via its `exports` map by `@apo/agent-evals` ([ADR-0016](../../docs/adr/0016-agent-evals-imports-the-built-orchestrator.md))
+
+## Owned execution inspection
+
+`GET /intents/:id/evidence` returns `{evidence:null}` before a workflow starts,
+otherwise the durable-ledger evidence projection. `POST /intents/:id/resend`
+resends only the completed owned simulated payment. Both enter
+`InspectIntentExecution`, which checks the stored customer before downstream
+IO; another customer's intent returns the same 404 as a missing one.
+Browser-supplied payment IDs, amounts and keys are never used.
+
+The outbound HTTP client validates both evidence and resend responses.
+`DEMO_RESEND_ENABLED` defaults to false; live composition always disables it
+regardless of the flag. Durable-ledger has its own independent opt-in.
+Observations, completed capture proof and same-operation posting reconstruction
+belong to durable-ledger. Agent owns intent/customer scoping and never imports
+vendor SDKs or ledger persistence details.
+
+## Isolated failure challenges
+
+`POST /demo/challenges` accepts only `{scenario}` from the fixed enum
+`duplicates`, `temporary_failure`, `inflated_amount`, `permanent_decline`.
+`RunDemoChallenge` owns the fixed sources ($500 for the first three cases,
+$600 for permanent decline), real mock proposal/policy,
+atomic trusted profile creation, and explicit simulated payment start.
+`DEMO_CHALLENGES_ENABLED` defaults off and composition additionally requires
+mock mode. Ordinary submit cannot set execution metadata.
+
+`StoredIntent.executionProfile` is nullable repository metadata beside version,
+not part of the Intent aggregate. It is atomically inserted and immutable in
+both adapters (including a Postgres trigger). Both approval usecases resolve
+credentials through an injected port; the mock adapter maps the allowlisted
+profile to a unique per-intent opaque simulator token. Assigned profiles fail
+closed when disabled/live, never fall back to configured credentials.
+Null metadata preserves ordinary submit/approval behavior.
+
+`POST /intents/:id/redeliver` checks ownership before any downstream IO, then
+attempts at most ten sequential exact completed resends. Nine seconds overall
+and bounded per-call aborts stop uncertain batches; remaining receipts are
+not_attempted. The batch never starts another workflow and never reports a
+prevented-charge count. `invariantVerified` requires ten fulfilled identity-
+matching receipts. Payment projection, recording and exact replay belong to
+durable-ledger; the agent never imports provider SDKs or ledger persistence.

@@ -35,6 +35,7 @@ const rejectVerdict: PolicyVerdict = {
 function baseRow(overrides: Partial<IntentRow> = {}): IntentRow {
   const now = new Date("2026-01-01T00:00:00Z");
   return {
+    executionProfile: null,
     id: randomUUID(),
     customerId: "cust_1",
     intentText: "Pay vendor-42 $50.00 for invoice #123.",

@@ -78,6 +78,8 @@ async function main(): Promise<void> {
 
   const orchestrator = createAgentOrchestrator({
     databaseUrl: cfg.DATABASE_URL,
+    demoResendEnabled: cfg.DEMO_RESEND_ENABLED,
+    demoChallengesEnabled: cfg.DEMO_CHALLENGES_ENABLED,
     durableLedgerUrl: cfg.DURABLE_LEDGER_URL,
     durableLedgerServiceSecret: cfg.DURABLE_LEDGER_SERVICE_SECRET,
     durableLedgerTimeoutMs: cfg.DURABLE_LEDGER_TIMEOUT_MS,

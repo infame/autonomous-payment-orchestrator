@@ -56,3 +56,14 @@ export class IntentNotFoundError extends OrchestratorError {
 //   It's about an orphaned durable-ledger handle (a use-case/persistence
 //   concern), not a domain concept `Intent`/`AgentProposal` enforce on
 //   themselves.
+
+/** Execution inspection/resend boundary failure, safe for callers. */
+export class ExecutionInspectionError extends OrchestratorError {
+  constructor(
+    readonly status: 404 | 409 | 503,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}

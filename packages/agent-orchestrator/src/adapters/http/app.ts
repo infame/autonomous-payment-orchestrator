@@ -1,3 +1,7 @@
+import type { RunDemoChallenge } from "../../app/run-demo-challenge.js";
+import { ExecutionInspectionError } from "../../domain/errors.js";
+import type { AgentCoreClient } from "../../ports/agent-core-client.js";
+import { InspectIntentExecution } from "../../app/inspect-intent-execution.js";
 import { Hono } from "hono";
 import type { SubmitIntent } from "../../app/submit-intent.js";
 import type { GetIntent } from "../../app/get-intent.js";
@@ -21,6 +25,9 @@ import {
 import { mapError } from "./server-error-mapper.js";
 
 export interface AgentOrchestratorAppDeps {
+  readonly runDemoChallenge?: Pick<RunDemoChallenge, "execute">;
+  readonly executionClient?: AgentCoreClient;
+  readonly demoResendEnabled?: boolean;
   readonly submitIntent: Pick<SubmitIntent, "execute">;
   /**
    * Two jobs, both load-bearing: (1) the ownership pre-check on all four
@@ -84,6 +91,15 @@ export function createAgentOrchestratorApp(
 ): Hono {
   const app = new Hono();
 
+  app.post("/demo/challenges", async (c) => {
+    const customerId = requireCustomerId(c);
+    if (deps.runDemoChallenge === undefined)
+      throw new ExecutionInspectionError(404, "not_found", "Not found");
+    return c.json(
+      await deps.runDemoChallenge.execute(customerId, await readJsonBody(c)),
+      201,
+    );
+  });
   app.post("/intents", async (c) => {
     const customerId = requireCustomerId(c);
     // Read/validate the header before touching the request body, so a
@@ -197,6 +213,31 @@ export function createAgentOrchestratorApp(
     return c.json({ intent: view }, 200);
   });
 
+  const execution = new InspectIntentExecution(
+    deps.getIntent,
+    deps.executionClient,
+    deps.demoResendEnabled === true,
+  );
+  app.get("/intents/:id/evidence", async (c) => {
+    const customerId = requireCustomerId(c);
+    const id = IntentIdParam.parse(c.req.param("id"));
+    return c.json(await execution.read(id, customerId));
+  });
+  app.post("/intents/:id/resend", async (c) => {
+    const customerId = requireCustomerId(c);
+    const id = IntentIdParam.parse(c.req.param("id"));
+    return c.json(await execution.resend(id, customerId));
+  });
+
+  app.post("/intents/:id/redeliver", async (c) => {
+    const customerId = requireCustomerId(c);
+    return c.json(
+      await execution.redeliver(
+        IntentIdParam.parse(c.req.param("id")),
+        customerId,
+      ),
+    );
+  });
   app.get("/healthz", (c) => c.json({ status: "ok" }, 200));
 
   app.onError((err, c) => {

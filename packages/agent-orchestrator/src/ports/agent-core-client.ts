@@ -1,3 +1,4 @@
+import type { ExecutionEvidenceClient } from "./execution-evidence.js";
 import type { PaymentProposal } from "../domain/agent-proposal.js";
 
 /**
@@ -167,7 +168,7 @@ export interface StartPaymentWorkflowOptions extends RequestOptions {
   readonly idempotencyKey?: string;
 }
 
-export interface AgentCoreClient {
+export interface AgentCoreClient extends Partial<ExecutionEvidenceClient> {
   readonly name: string;
   startPaymentWorkflow(
     req: StartPaymentWorkflowRequest,
@@ -211,7 +212,11 @@ export function paymentWorkflowRequestFor(
   };
 }
 
-export type AgentCoreOperation = "start_payment_workflow" | "get_run_status";
+export type AgentCoreOperation =
+  | "get_execution_evidence"
+  | "resend_execution"
+  | "start_payment_workflow"
+  | "get_run_status";
 
 export interface AgentCoreErrorContext {
   readonly operation: AgentCoreOperation;

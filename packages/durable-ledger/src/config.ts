@@ -9,6 +9,10 @@ import { z } from "zod";
  */
 export const AppConfig = z
   .object({
+    DEMO_RESEND_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((v) => v === "true"),
     DATABASE_URL: z.string().min(1),
     // Shared only with trusted service clients. Never use a z.enum here:
     // invalid-value messages for secret-bearing fields must not echo values.

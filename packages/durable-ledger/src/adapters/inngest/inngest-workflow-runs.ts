@@ -36,6 +36,7 @@ const IDEMPOTENCY_KEY_SHAPE = /^[\x21-\x7E]{1,200}$/;
  */
 interface AbortSignalStatics {
   timeout(milliseconds: number): AbortSignal;
+  any(signals: AbortSignal[]): AbortSignal;
 }
 const AbortSignalStatics = AbortSignal as unknown as typeof AbortSignal &
   AbortSignalStatics;
@@ -201,9 +202,13 @@ export class InngestWorkflowRuns implements WorkflowRuns {
     return { eventId };
   }
 
-  async findByEventId(eventId: string): Promise<WorkflowRunSnapshot | null> {
+  async findByEventId(
+    eventId: string,
+    options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number },
+  ): Promise<WorkflowRunSnapshot | null> {
     const listEnvelope = await this.request(
       `/v1/events/${encodeURIComponent(eventId)}/runs`,
+      options,
     );
     if (listEnvelope.status === 400) {
       return null;
@@ -232,6 +237,7 @@ export class InngestWorkflowRuns implements WorkflowRuns {
 
     const detailEnvelope = await this.request(
       `/v1/runs/${encodeURIComponent(firstRun.run_id)}`,
+      options,
     );
     this.assertHealthy(detailEnvelope);
 
@@ -266,7 +272,10 @@ export class InngestWorkflowRuns implements WorkflowRuns {
     }
   }
 
-  private async request(path: string): Promise<Envelope> {
+  private async request(
+    path: string,
+    options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number },
+  ): Promise<Envelope> {
     const url = `${this.apiBaseUrl}${path}`;
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.options.signingKey !== undefined) {
@@ -277,9 +286,12 @@ export class InngestWorkflowRuns implements WorkflowRuns {
     try {
       response = await this.fetchImpl(url, {
         headers,
-        signal: AbortSignalStatics.timeout(
-          this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ),
+        signal: AbortSignalStatics.any([
+          AbortSignalStatics.timeout(
+            options?.timeoutMs ?? this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ),
+          ...(options?.signal ? [options.signal] : []),
+        ]),
       });
     } catch (err) {
       throw new WorkflowEngineUnavailableError(

@@ -40,6 +40,7 @@ async function main(): Promise<void> {
 
   const ledger = createDurableLedger({
     databaseUrl: cfg.DATABASE_URL,
+    demoResendEnabled: cfg.DEMO_RESEND_ENABLED,
     serviceSecret: cfg.DURABLE_LEDGER_SERVICE_SECRET,
     payCoreUrl: cfg.PAY_CORE_URL,
     payCoreTimeoutMs: cfg.PAY_CORE_TIMEOUT_MS,

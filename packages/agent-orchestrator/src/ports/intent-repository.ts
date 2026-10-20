@@ -1,3 +1,4 @@
+import type { ExecutionProfile } from "./execution-credentials.js";
 import { Intent } from "../domain/intent.js";
 import { OrchestratorError } from "../domain/errors.js";
 
@@ -60,11 +61,15 @@ import { OrchestratorError } from "../domain/errors.js";
 export interface StoredIntent {
   readonly intent: Intent;
   readonly version: number;
+  readonly executionProfile?: ExecutionProfile | null;
 }
 
 export interface IntentRepository {
   findById(id: string): Promise<StoredIntent | null>;
-  create(intent: Intent): Promise<StoredIntent>;
+  create(
+    intent: Intent,
+    metadata?: { readonly executionProfile: ExecutionProfile },
+  ): Promise<StoredIntent>;
   update(intent: Intent, expectedVersion: number): Promise<StoredIntent>;
   countCompletedSince(customerId: string, since: Date): Promise<number>;
 }

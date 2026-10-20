@@ -1,3 +1,4 @@
+import { ExecutionInspectionError } from "../../domain/errors.js";
 import { ZodError } from "zod";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
@@ -111,7 +112,7 @@ export function mapError(err: unknown): MappedError {
     };
   }
 
-  if (err instanceof HttpError) {
+  if (err instanceof HttpError || err instanceof ExecutionInspectionError) {
     return {
       status: err.status,
       body: { error: { code: err.code, message: err.message } },

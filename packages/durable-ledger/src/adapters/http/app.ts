@@ -1,3 +1,7 @@
+import {
+  ExecutionEvidence,
+  type ExecutionEvidenceDeps,
+} from "../../app/execution-evidence.js";
 import { timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -14,7 +18,7 @@ import { toLedgerEntryView } from "./ledger-view.js";
 import { optionalIdempotencyKey, readJsonBody } from "./request.js";
 import { HttpError, mapError } from "./server-error-mapper.js";
 
-export interface LedgerAppDeps {
+export interface LedgerAppDeps extends ExecutionEvidenceDeps {
   readonly ledger: LedgerRepository;
   readonly runs: WorkflowRuns;
   /** Every business route requires this exact `X-Service-Secret`; health and the signed Inngest callback remain separate. */
@@ -93,6 +97,27 @@ export function createLedgerApp(deps: LedgerAppDeps): Hono {
       );
     }
     return c.json(snapshot, 200);
+  });
+
+  const evidence = new ExecutionEvidence(deps);
+  app.get("/workflows/:eventId/evidence", async (c) => {
+    const denied = requireServiceAccess(c, deps.serviceSecret);
+    if (denied !== null) return denied;
+    return c.json(
+      await evidence.read(EventIdParam.parse(c.req.param("eventId"))),
+    );
+  });
+  app.post("/workflows/:eventId/resend", async (c) => {
+    const denied = requireServiceAccess(c, deps.serviceSecret);
+    if (denied !== null) return denied;
+    return c.json(
+      await evidence.resend(EventIdParam.parse(c.req.param("eventId")), {
+        signal: (
+          AbortSignal as unknown as { timeout(ms: number): AbortSignal }
+        ).timeout(1200),
+        timeoutMs: 1000,
+      }),
+    );
   });
 
   app.get("/ledger/entries", async (c) => {

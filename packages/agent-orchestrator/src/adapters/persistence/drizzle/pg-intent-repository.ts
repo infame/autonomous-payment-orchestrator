@@ -1,3 +1,7 @@
+import {
+  executionProfile,
+  type ExecutionProfile,
+} from "../../../ports/execution-credentials.js";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { Intent } from "../../../domain/intent.js";
 import {
@@ -41,14 +45,24 @@ export class PgIntentRepository implements IntentRepository {
     if (!row) {
       return null;
     }
-    return { intent: rowToIntent(row), version: row.version };
+    return {
+      intent: rowToIntent(row),
+      version: row.version,
+      executionProfile: executionProfile(row.executionProfile),
+    };
   }
 
-  async create(intent: Intent): Promise<StoredIntent> {
+  async create(
+    intent: Intent,
+    metadata?: { readonly executionProfile: ExecutionProfile },
+  ): Promise<StoredIntent> {
     try {
       const rows = await this.db
         .insert(intents)
-        .values(intentToRow(intent, 1))
+        .values({
+          ...intentToRow(intent, 1),
+          executionProfile: executionProfile(metadata?.executionProfile),
+        })
         .returning();
       const row = rows[0];
       if (!row) {
@@ -56,7 +70,11 @@ export class PgIntentRepository implements IntentRepository {
           `PgIntentRepository.create: insert for intent "${intent.id}" returned no row`,
         );
       }
-      return { intent: rowToIntent(row), version: row.version };
+      return {
+        intent: rowToIntent(row),
+        version: row.version,
+        executionProfile: executionProfile(row.executionProfile),
+      };
     } catch (err) {
       if (isUniqueViolation(err)) {
         throw new IntentAlreadyExistsError(intent.id, { cause: err });
@@ -91,7 +109,11 @@ export class PgIntentRepository implements IntentRepository {
     // Re-map the RETURNING row (mirroring create()) so the returned
     // aggregate is guaranteed to reflect exactly what's in the database,
     // never the caller's pre-write input object.
-    return { intent: rowToIntent(updated), version: updated.version };
+    return {
+      intent: rowToIntent(updated),
+      version: updated.version,
+      executionProfile: executionProfile(updated.executionProfile),
+    };
   }
 
   async countCompletedSince(customerId: string, since: Date): Promise<number> {

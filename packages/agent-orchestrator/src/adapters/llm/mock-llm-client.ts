@@ -184,7 +184,12 @@ export class MockLlmClient implements LlmClient {
     ]);
 
     let amount: number;
-    if (selector === "ungrounded") {
+    if (selector === "inflated") {
+      amount =
+        candidates.size === 0
+          ? UNGROUNDED_FALLBACK_AMOUNT
+          : Math.max(...candidates) * 10;
+    } else if (selector === "ungrounded") {
       amount =
         candidates.size === 0
           ? UNGROUNDED_FALLBACK_AMOUNT

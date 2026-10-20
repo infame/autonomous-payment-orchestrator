@@ -64,6 +64,7 @@ export const intents = agentSchema.table(
     policyVerdict: jsonb("policy_verdict").$type<PolicyVerdict>(),
     durableLedgerEventId: text("durable_ledger_event_id"),
     clarificationAnswer: text("clarification_answer"),
+    executionProfile: text("execution_profile"),
     version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
@@ -73,6 +74,10 @@ export const intents = agentSchema.table(
       .defaultNow(),
   },
   (t) => [
+    check(
+      "intents_execution_profile_valid",
+      sql`${t.executionProfile} IS NULL OR ${t.executionProfile} IN ('demo_ok','demo_transient','demo_decline')`,
+    ),
     check(
       "intents_status_valid",
       sql`${t.status} IN ('received','needs_clarification','proposed','needs_approval','rejected','executing','completed','failed','needs_review')`,

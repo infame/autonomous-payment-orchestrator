@@ -1,3 +1,7 @@
+import {
+  executionProfile,
+  type ExecutionProfile,
+} from "../../ports/execution-credentials.js";
 import { Intent, type IntentProps } from "../../domain/intent.js";
 import {
   IntentAlreadyExistsError,
@@ -30,7 +34,11 @@ import {
 export class InMemoryIntentRepository implements IntentRepository {
   private readonly intents = new Map<
     string,
-    { state: IntentProps; version: number }
+    {
+      state: IntentProps;
+      version: number;
+      executionProfile: ExecutionProfile | null;
+    }
   >();
 
   async findById(id: string): Promise<StoredIntent | null> {
@@ -41,16 +49,29 @@ export class InMemoryIntentRepository implements IntentRepository {
     return {
       intent: Intent.fromState(structuredClone(stored.state)),
       version: stored.version,
+      executionProfile: stored.executionProfile,
     };
   }
 
-  async create(intent: Intent): Promise<StoredIntent> {
+  async create(
+    intent: Intent,
+    metadata?: { readonly executionProfile: ExecutionProfile },
+  ): Promise<StoredIntent> {
     if (this.intents.has(intent.id)) {
       throw new IntentAlreadyExistsError(intent.id);
     }
     const state = structuredClone(intent.toState());
-    this.intents.set(intent.id, { state, version: 1 });
-    return { intent: Intent.fromState(structuredClone(state)), version: 1 };
+    const profile = executionProfile(metadata?.executionProfile);
+    this.intents.set(intent.id, {
+      state,
+      version: 1,
+      executionProfile: profile,
+    });
+    return {
+      intent: Intent.fromState(structuredClone(state)),
+      version: 1,
+      executionProfile: profile,
+    };
   }
 
   async update(intent: Intent, expectedVersion: number): Promise<StoredIntent> {
@@ -63,8 +84,16 @@ export class InMemoryIntentRepository implements IntentRepository {
     }
     const state = structuredClone(intent.toState());
     const version = expectedVersion + 1;
-    this.intents.set(intent.id, { state, version });
-    return { intent: Intent.fromState(structuredClone(state)), version };
+    this.intents.set(intent.id, {
+      state,
+      version,
+      executionProfile: stored.executionProfile,
+    });
+    return {
+      intent: Intent.fromState(structuredClone(state)),
+      version,
+      executionProfile: stored.executionProfile,
+    };
   }
 
   async countCompletedSince(customerId: string, since: Date): Promise<number> {

@@ -151,3 +151,37 @@ export const ledgerEntries = ledgerSchema.table(
 
 export type LedgerEntryRow = typeof ledgerEntries.$inferSelect;
 export type NewLedgerEntryRow = typeof ledgerEntries.$inferInsert;
+
+/** Best-effort sanitized observations; never the source of payment truth. */
+export const executionAttempts = ledgerSchema.table(
+  "execution_attempts",
+  {
+    id: uuid("id").primaryKey(),
+    runId: text("run_id").notNull(),
+    eventId: text("event_id"),
+    step: text("step").notNull(),
+    phase: text("phase").notNull(),
+    paymentId: text("payment_id"),
+    operationId: uuid("operation_id"),
+    idempotencyKey: text("idempotency_key"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    outcome: text("outcome").notNull(),
+    errorCode: text("error_code"),
+  },
+  (t) => [
+    index("execution_attempts_run_started_idx").on(t.runId, t.startedAt),
+    check(
+      "execution_attempts_step_check",
+      sql`${t.step} IN ('authorize','capture','post-ledger')`,
+    ),
+    check(
+      "execution_attempts_phase_check",
+      sql`${t.phase} IN ('workflow','resend')`,
+    ),
+    check(
+      "execution_attempts_outcome_check",
+      sql`${t.outcome} IN ('started','succeeded','failed')`,
+    ),
+  ],
+);

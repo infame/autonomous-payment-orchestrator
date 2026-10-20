@@ -1,3 +1,5 @@
+import { recordAttempt } from "./record-attempt.js";
+import type { ExecutionJournal } from "../ports/execution-journal.js";
 import type { Inngest } from "inngest";
 import { NonRetriableError } from "inngest";
 import type {
@@ -31,6 +33,7 @@ import {
 } from "./compensation.js";
 
 export interface PaymentExecuteRunDeps {
+  readonly journal?: ExecutionJournal;
   readonly payCore: PayCoreClient;
   readonly ledger: LedgerRepository;
   readonly retry?: DecideRetryOptions;
@@ -86,6 +89,7 @@ export const PAYMENT_EXECUTE_STEPS = [
 export async function runPaymentExecute(
   step: WorkflowStep,
   ctx: {
+    readonly eventId?: string;
     readonly runId: string;
     readonly attempt: number;
     readonly data: PaymentExecuteRequested;
@@ -101,9 +105,23 @@ export async function runPaymentExecute(
       "authorize",
       async () => {
         try {
-          return await deps.payCore.createPayment(
-            { amount, currency, paymentMethodToken },
-            { idempotencyKey: stepIdempotencyKey(runId, "authorize") },
+          return await recordAttempt(
+            deps.journal,
+            {
+              runId,
+              eventId: ctx.eventId ?? null,
+              step: "authorize",
+              phase: "workflow",
+              paymentId: null,
+              operationId: null,
+              idempotencyKey: stepIdempotencyKey(runId, "authorize"),
+            },
+            () =>
+              deps.payCore.createPayment(
+                { amount, currency, paymentMethodToken },
+                { idempotencyKey: stepIdempotencyKey(runId, "authorize") },
+              ),
+            (result) => result.id,
           );
         } catch (error) {
           rethrowForInngest("authorize", error, attempt + 1, deps.retry);
@@ -128,9 +146,23 @@ export async function runPaymentExecute(
       "capture",
       async () => {
         try {
-          return await deps.payCore.capturePayment(
-            { paymentId: authorized.id },
-            { idempotencyKey: stepIdempotencyKey(runId, "capture") },
+          return await recordAttempt(
+            deps.journal,
+            {
+              runId,
+              eventId: ctx.eventId ?? null,
+              step: "capture",
+              phase: "workflow",
+              paymentId: authorized.id,
+              operationId: null,
+              idempotencyKey: stepIdempotencyKey(runId, "capture"),
+            },
+            () =>
+              deps.payCore.capturePayment(
+                { paymentId: authorized.id },
+                { idempotencyKey: stepIdempotencyKey(runId, "capture") },
+              ),
+            (result) => result.id,
           );
         } catch (error) {
           rethrowForInngest("capture", error, attempt + 1, deps.retry);
@@ -153,7 +185,20 @@ export async function runPaymentExecute(
           merchantId,
           amount: Money.of(captured.capturedAmount, captured.currency),
         });
-        const result = await deps.ledger.post(group);
+        const result = await recordAttempt(
+          deps.journal,
+          {
+            runId,
+            eventId: ctx.eventId ?? null,
+            step: "post-ledger",
+            phase: "workflow",
+            paymentId: captured.id,
+            operationId,
+            idempotencyKey: null,
+          },
+          () => deps.ledger.post(group),
+          () => captured.id,
+        );
         return { operationId, outcome: result.outcome };
       } catch (error) {
         rethrowForInngest("post-ledger", error, attempt + 1, deps.retry);
@@ -241,6 +286,10 @@ export function createPaymentExecuteFunction(deps: PaymentExecuteDeps) {
       triggers: [{ event: paymentExecuteRequested }],
     },
     async ({ event, step, runId, attempt }) =>
-      runPaymentExecute(step, { runId, attempt, data: event.data }, deps),
+      runPaymentExecute(
+        step,
+        { runId, attempt, eventId: event.id, data: event.data },
+        deps,
+      ),
   );
 }

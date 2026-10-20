@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
@@ -9,6 +9,7 @@ import { Grant } from "../../domain/grant.js";
 import type { GrantStore, LiveBudgetStore } from "../../ports/grant-store.js";
 import { signGrant, verifyGrant } from "../../grant/token.js";
 import { renderErrorPage, renderHome, renderIntentDetail } from "./ui.js";
+import { findBrowserScenario } from "./browser-scenarios.js";
 
 const GRANT_COOKIE = "apo_grant";
 /**
@@ -95,6 +96,23 @@ const UpstreamIntentResponse = z.object({
     text: z.string(),
     proposal: UpstreamProposal,
     durableLedgerEventId: z.string().nullable(),
+    clarificationAnswer: z.string().nullable().optional(),
+    policyVerdict: z
+      .discriminatedUnion("decision", [
+        z.object({ decision: z.literal("allow") }),
+        z.object({
+          decision: z.literal("needs_approval"),
+          reason: z.string(),
+          detail: z.string(),
+        }),
+        z.object({
+          decision: z.literal("reject"),
+          reason: z.string(),
+          detail: z.string(),
+        }),
+      ])
+      .nullable()
+      .optional(),
   }),
 });
 
@@ -499,9 +517,16 @@ function ensureCustomerId(c: Context): string {
     return existing;
   }
   const fresh = randomUUID();
+  // Safari rejects Secure cookies even on HTTP localhost. This exception is
+  // only for the unsigned customer identity on an exact loopback URL; grant
+  // credentials stay Secure. Do not trust forwarded host/protocol headers.
+  const requestUrl = new URL(c.req.url);
+  const localHttp =
+    requestUrl.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(requestUrl.hostname);
   setCookie(c, CUSTOMER_COOKIE, fresh, {
     httpOnly: true,
-    secure: true,
+    secure: !localHttp,
     sameSite: "Lax",
     path: "/",
     maxAge: CUSTOMER_COOKIE_MAX_AGE_SECONDS,
@@ -599,7 +624,7 @@ function buildInternalCookieHeader(c: Context, customerId: string): string {
  * Builds the `orchestra` gateway Hono app — the only publicly-reachable
  * service in this system (ADR-0020). Routes: grant issuance (admin-gated),
  * grant activation (signature+exp gated), the mock-session escape hatch,
- * two server-rendered HTMX views, and the `/api/*` reverse proxy. Single
+ * a same-page experiment console, manual review pages, and the `/api/*` reverse proxy. Single
  * `onError`/`notFound`, matching every sibling package's HTTP adapter
  * convention.
  */
@@ -616,6 +641,8 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
     message: string,
     status: ContentfulStatusCode,
   ): Promise<Response> {
+    if (c.req.header("accept")?.includes("application/json"))
+      return c.json({ error: { message } }, status);
     const upstream = await resolveUpstream(c, deps, clock());
     const remaining = upstream.isLive ? upstream.grant.remainingCalls : null;
     const rendered = await renderErrorPage(
@@ -637,6 +664,7 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
     c: Context,
     apiPath: string,
     body?: Readonly<Record<string, string>>,
+    idempotencyKey?: string,
   ): Promise<Response> {
     const customerId = ensureCustomerId(c);
     const headers = new Headers({
@@ -645,6 +673,8 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
     if (body !== undefined) {
       headers.set("content-type", "application/json");
     }
+    if (idempotencyKey !== undefined)
+      headers.set("Idempotency-Key", idempotencyKey);
     const apiResponse = await app.request(`/api${apiPath}`, {
       method: "POST",
       headers,
@@ -671,6 +701,8 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
           502,
         );
       }
+      if (c.req.header("accept")?.includes("application/json"))
+        return c.json(parsed.data, 200);
       return c.redirect(
         `/intents/${encodeURIComponent(parsed.data.intent.id)}`,
         303,
@@ -685,7 +717,11 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
       apiResponse.status >= 400 && apiResponse.status <= 599
         ? (apiResponse.status as ContentfulStatusCode)
         : 502;
-    return renderUiError(c, message, status);
+    const recovery =
+      idempotencyKey !== undefined && status >= 500
+        ? " If the outcome is uncertain, go back to the same form and retry without editing the request. Opening a fresh form starts a new submission."
+        : "";
+    return renderUiError(c, message + recovery, status);
   }
 
   // `public/htmx.min.js` is vendored into this repo, not CDN-loaded (OQ5,
@@ -815,6 +851,7 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
   });
 
   app.get("/", async (c) => {
+    c.header("Cache-Control", "no-store");
     ensureCustomerId(c);
     const upstream = await resolveUpstream(c, deps, clock());
     const remaining = upstream.isLive ? upstream.grant.remainingCalls : null;
@@ -826,78 +863,114 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
   });
 
   app.get("/intents/:id", async (c) => {
+    c.header("Cache-Control", "no-store");
     const customerId = ensureCustomerId(c);
+    const pollQuery = c.req.query("poll");
+    const pollCount =
+      pollQuery === undefined
+        ? 0
+        : /^\d+$/.test(pollQuery)
+          ? Math.min(30, Number(pollQuery))
+          : 30;
+    async function detailError(message: string, status: ContentfulStatusCode) {
+      const rendered = await renderErrorPage(
+        message,
+        upstream.isLive ? "live" : "mock",
+        upstream.isLive ? upstream.grant.remainingCalls : null,
+        `/intents/${encodeURIComponent(c.req.param("id"))}?poll=30`,
+      );
+      return c.html(rendered.toString(), status);
+    }
     const now = clock();
     const upstream = await resolveUpstream(c, deps, now);
     const id = c.req.param("id");
-    // `id` is route-param-decoded, attacker-influenced text, and is only
-    // ever safe from the `//host/...`-style SSRF `resolveWithinOrigin`
-    // guards against here BY ACCIDENT of the fixed `/intents/` prefix
-    // always occupying position 0 of the resolved string — asserted
-    // explicitly anyway rather than relying on that accident staying true
-    // across a future refactor.
     const target = resolveWithinOrigin(`/intents/${id}`, upstream.base);
-    if (target === null) {
-      return c.json(
-        { error: { code: "not_found", message: "Not found" } },
-        404,
+    const notFoundMessage =
+      "This payment could not be found in this browser session.";
+    if (target === null) return detailError(notFoundMessage, 404);
+    let upstreamRes: Response;
+    try {
+      upstreamRes = await fetchUpstream(
+        target,
+        { headers: { "X-Customer-Id": customerId } },
+        defaultUpstreamTimeoutMs,
+      );
+    } catch (error) {
+      return detailError(
+        error instanceof UpstreamTimeoutError
+          ? "The upstream service took too long to respond. Try loading this payment again."
+          : "Could not load this payment. Try loading it again.",
+        error instanceof UpstreamTimeoutError ? 504 : 502,
       );
     }
-    const upstreamRes = await fetchUpstream(
-      target,
-      { headers: { "X-Customer-Id": customerId } },
-      defaultUpstreamTimeoutMs,
-    );
-    if (upstreamRes.status === 404) {
-      return c.json(
-        { error: { code: "not_found", message: "Not found" } },
-        404,
-      );
-    }
-    if (!upstreamRes.ok) {
-      return c.json(
-        {
-          error: {
-            code: "upstream_error",
-            message: "Failed to load this intent.",
-          },
-        },
-        502,
-      );
-    }
+    if (upstreamRes.status === 404) return detailError(notFoundMessage, 404);
+    if (!upstreamRes.ok)
+      return detailError("Failed to load this payment. Try again.", 502);
     let upstreamBody: unknown;
     try {
       upstreamBody = await upstreamRes.json();
     } catch {
-      return c.json(
-        {
-          error: {
-            code: "upstream_response_invalid",
-            message: "The upstream service returned an invalid response.",
-          },
-        },
+      return detailError(
+        "The upstream service returned an invalid response.",
         502,
       );
     }
     const parsed = UpstreamIntentResponse.safeParse(upstreamBody);
-    if (!parsed.success) {
-      return c.json(
-        {
-          error: {
-            code: "upstream_response_invalid",
-            message: "The upstream service returned an invalid response.",
-          },
-        },
+    if (!parsed.success)
+      return detailError(
+        "The upstream service returned an invalid response.",
         502,
       );
-    }
     const remaining = upstream.isLive ? upstream.grant.remainingCalls : null;
     const rendered = await renderIntentDetail(
       parsed.data.intent,
       upstream.isLive ? "live" : "mock",
       remaining,
+      pollCount,
     );
     return c.html(rendered.toString());
+  });
+
+  app.post("/ui/challenges", async (c) => {
+    const form = await readUiForm(c);
+    const parsed = z
+      .enum([
+        "duplicates",
+        "temporary_failure",
+        "inflated_amount",
+        "permanent_decline",
+      ])
+      .safeParse(singleFormField(form, "scenario"));
+    if (!parsed.success)
+      return renderUiError(c, "Choose a known challenge.", 400);
+    const upstream = await resolveUpstream(c, deps, clock());
+    if (upstream.isLive)
+      return renderUiError(
+        c,
+        "Challenges are available only in mock mode.",
+        409,
+      );
+    return dispatchUiAction(c, "/demo/challenges", { scenario: parsed.data });
+  });
+  app.post("/ui/scenarios/:scenario", async (c) => {
+    await readUiForm(c);
+    const scenario = findBrowserScenario(c.req.param("scenario"));
+    if (scenario === undefined) {
+      return renderUiError(
+        c,
+        "Unknown demo scenario. Return to the scenarios and choose one.",
+        404,
+      );
+    }
+    const upstream = await resolveUpstream(c, deps, clock());
+    if (upstream.isLive) {
+      return renderUiError(
+        c,
+        "Prepared scenarios use mock reasoning. Switch back to mock mode to start one.",
+        409,
+      );
+    }
+    return dispatchUiAction(c, "/intents", { text: scenario.text });
   });
 
   app.post("/ui/intents", async (c) => {
@@ -908,7 +981,33 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
     if (!parsed.success) {
       return renderUiError(c, "Intent text is required.", 400);
     }
-    return dispatchUiAction(c, "/intents", { text: parsed.data.text });
+    const upstream = await resolveUpstream(c, deps, clock());
+    if (upstream.isLive)
+      return dispatchUiAction(c, "/intents", { text: parsed.data.text });
+    const key = z
+      .string()
+      .uuid()
+      .safeParse(singleFormField(form, "submissionKey"));
+    if (!key.success)
+      return renderUiError(
+        c,
+        "Reload the page to start a safely identified mock submission.",
+        400,
+      );
+    // An opaque, nonsecret form identity bound to exact text: uncertain retries
+    // reuse it; editing the text creates a distinct logical submission even
+    // without JavaScript. The existing agent keyed-submit boundary owns policy.
+    const idempotencyKey =
+      "ui-" +
+      createHash("sha256")
+        .update(key.data + "\0" + parsed.data.text)
+        .digest("hex");
+    return dispatchUiAction(
+      c,
+      "/intents",
+      { text: parsed.data.text },
+      idempotencyKey,
+    );
   });
 
   app.post("/ui/intents/:id/clarify", async (c) => {
@@ -1016,6 +1115,7 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
     // appending whatever `Set-Cookie` entries `c`'s own response already
     // carries.
     const responseHeaders = new Headers(upstreamRes.headers);
+    responseHeaders.set("Cache-Control", "no-store");
     // Neither agent-orchestrator instance ever sets a cookie — both are
     // stateless JSON APIs with no session/cookie concept anywhere in their
     // HTTP adapters. Drop whatever `Set-Cookie` the upstream response

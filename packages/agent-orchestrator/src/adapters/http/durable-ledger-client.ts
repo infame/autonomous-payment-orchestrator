@@ -1,3 +1,7 @@
+import {
+  executionEvidenceSchema,
+  resendResultSchema,
+} from "./execution-evidence-schemas.js";
 import { z } from "zod";
 import type { ZodType } from "zod";
 import type {
@@ -131,6 +135,31 @@ export class HttpDurableLedgerClient implements AgentCoreClient {
       schema: workflowRunSnapshotSchema,
       timeoutMs: opts?.timeoutMs,
       signal: opts?.signal,
+      idempotencyKey: undefined,
+    });
+  }
+
+  async getExecutionEvidence(eventId: string) {
+    return this.request({
+      operation: "get_execution_evidence",
+      method: "GET",
+      path: `/workflows/${encodeURIComponent(eventId)}/evidence`,
+      body: undefined,
+      schema: executionEvidenceSchema,
+      timeoutMs: undefined,
+      signal: undefined,
+      idempotencyKey: undefined,
+    });
+  }
+  async resendExecution(eventId: string, options?: RequestOptions) {
+    return this.request({
+      operation: "resend_execution",
+      method: "POST",
+      path: `/workflows/${encodeURIComponent(eventId)}/resend`,
+      body: undefined,
+      schema: resendResultSchema,
+      timeoutMs: options?.timeoutMs,
+      signal: options?.signal,
       idempotencyKey: undefined,
     });
   }

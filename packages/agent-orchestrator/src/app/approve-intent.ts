@@ -1,3 +1,5 @@
+import type { ExecutionCredentials } from "../ports/execution-credentials.js";
+import { ExecutionInspectionError } from "../domain/errors.js";
 import { z } from "zod";
 import {
   IntentNotFoundError,
@@ -214,6 +216,7 @@ export class ApproveIntent {
     private readonly agentCore: AgentCoreClient,
     private readonly paymentMethodToken: string,
     private readonly clock: () => Date = () => new Date(),
+    private readonly credentials?: ExecutionCredentials,
   ) {
     // Fail fast on a blank token at construction time, not on the first request.
     if (paymentMethodToken.trim() === "") {
@@ -248,9 +251,17 @@ export class ApproveIntent {
       );
     }
 
+    if (stored.executionProfile != null && this.credentials === undefined)
+      throw new ExecutionInspectionError(
+        409,
+        "demo_disabled",
+        "Simulation credentials are unavailable",
+      );
     const request = paymentWorkflowRequestFor({
       proposal,
-      paymentMethodToken: this.paymentMethodToken,
+      paymentMethodToken:
+        this.credentials?.resolve(stored, this.paymentMethodToken) ??
+        this.paymentMethodToken,
     });
     const { eventId } = await this.agentCore.startPaymentWorkflow(request, {
       idempotencyKey: intent.id,

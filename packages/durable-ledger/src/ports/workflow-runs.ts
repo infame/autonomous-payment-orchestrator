@@ -85,7 +85,10 @@ export interface WorkflowRuns {
     options?: StartPaymentExecuteOptions,
   ): Promise<{ readonly eventId: string }>;
   /** `null` when Inngest has no record of this event id at all. */
-  findByEventId(eventId: string): Promise<WorkflowRunSnapshot | null>;
+  findByEventId(
+    eventId: string,
+    options?: { readonly signal?: AbortSignal; readonly timeoutMs?: number },
+  ): Promise<WorkflowRunSnapshot | null>;
 }
 
 /** Raised when Inngest's API can't be reached or answers with a server-side failure (>= 500). */
