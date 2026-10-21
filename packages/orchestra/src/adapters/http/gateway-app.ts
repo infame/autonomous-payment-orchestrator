@@ -9,6 +9,7 @@ import { Grant } from "../../domain/grant.js";
 import type { GrantStore, LiveBudgetStore } from "../../ports/grant-store.js";
 import { signGrant, verifyGrant } from "../../grant/token.js";
 import { renderErrorPage, renderHome, renderIntentDetail } from "./ui.js";
+import { proxyInngest } from "./inngest-proxy.js";
 import { findBrowserScenario } from "./browser-scenarios.js";
 
 const GRANT_COOKIE = "apo_grant";
@@ -128,6 +129,7 @@ const UiSubmitForm = z.object({ text: z.string().min(1) });
 const UiClarifyForm = z.object({ answer: z.string().min(1) });
 
 export interface GatewayAppDeps {
+  readonly inngestCallbackUrl?: string;
   readonly grantStore: GrantStore;
   readonly liveBudgetStore: LiveBudgetStore;
   /** `undefined` disables `POST /internal/grant` entirely — it 404s, matching ADR-0014's existence-oracle reasoning for every other "you're not allowed here" case in this monorepo. */
@@ -1040,6 +1042,16 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
       `/intents/${encodeURIComponent(c.req.param("id"))}/reject`,
     );
   });
+
+  if (deps.inngestCallbackUrl !== undefined) {
+    const callbackUrl = deps.inngestCallbackUrl;
+    app.all("/api/inngest", (c) =>
+      proxyInngest(c, callbackUrl, defaultUpstreamTimeoutMs),
+    );
+    app.all("/api/inngest/*", (c) =>
+      c.json({ error: { code: "not_found", message: "Not found" } }, 404),
+    );
+  }
 
   app.all("/api/*", async (c) => {
     const customerId = ensureCustomerId(c);

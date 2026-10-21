@@ -1,0 +1,74 @@
+# Disposable local verification only. No host ports and no cloud credentials.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: apo
+      POSTGRES_PASSWORD: local-smoke-only
+      POSTGRES_DB: apo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apo -d apo"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  inngest:
+    image: inngest/inngest:v1.44.0
+    command:
+      ["inngest", "dev", "--no-discovery", "-u", "http://demo:3300/api/inngest"]
+  demo:
+    image: apo-single-vm:local
+    mem_limit: 1g
+    cpus: 1
+    environment:
+      DATABASE_URL: postgres://apo:local-smoke-only@postgres:5432/apo
+      DURABLE_LEDGER_SERVICE_SECRET: local-smoke-service-secret-00000001
+      SINGLE_VM_LOCAL_TEST: "true"
+      PUBLIC_BASE_URL: http://demo:3300
+      LOCAL_INNGEST_URL: http://inngest:8288
+    depends_on:
+      postgres:
+        condition: service_healthy
+      inngest:
+        condition: service_started
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3300/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  cloud-check:
+    image: apo-single-vm:local
+    mem_limit: 1g
+    cpus: 1
+    profiles: ["cloud-check"]
+    environment:
+      DATABASE_URL: postgres://apo:local-smoke-only@postgres:5432/apo
+      DURABLE_LEDGER_SERVICE_SECRET: local-smoke-service-secret-00000001
+      PUBLIC_BASE_URL: https://demo.example.com
+      INNGEST_EVENT_KEY: local-dummy-event-key
+      INNGEST_SIGNING_KEY: signkey-test-0000000000000000000000000000000000000000000000000000000000000000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 20s
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3300/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+networks:
+  default:
+    # Enforce that dummy cloud credentials cannot make outbound registrations.
+    internal: true

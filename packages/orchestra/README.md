@@ -20,6 +20,16 @@ project's public front door.
   deploy runbook.) See
   `docs/adr/0020-orchestra-gateway-and-the-second-orchestrator-instance.md`.
 
+## Single-VM portfolio deployment
+
+The [deployment runbook](deploy/RUNBOOK.md) describes the primary mock-only
+portfolio topology: one Fly machine running four supervised processes, Neon
+PostgreSQL and Inngest Cloud. Only the gateway is externally reachable; it
+forwards the exact signed Inngest callback to the loopback ledger service.
+Use a dedicated HTTPS origin. The common image and disposable local smoke
+harness are in `deploy/`; cloud provisioning and deployment are separate
+operator actions. The five-app/live-agent setup remains a documented alternative.
+
 ## Browser UI
 
 `GET /` is the **Failure lab**: four fixed buttons start independent simulated

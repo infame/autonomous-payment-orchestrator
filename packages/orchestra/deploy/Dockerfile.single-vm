@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+# Build from the repository root.
+FROM node:24-alpine AS base
+ENV PNPM_HOME="/pnpm" PATH="/pnpm:$PATH" COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+RUN corepack enable
+WORKDIR /repo
+
+FROM base AS build
+ENV CI=true
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY packages/pay-core/package.json packages/pay-core/package.json
+COPY packages/durable-ledger/package.json packages/durable-ledger/package.json
+COPY packages/agent-orchestrator/package.json packages/agent-orchestrator/package.json
+COPY packages/orchestra/package.json packages/orchestra/package.json
+RUN pnpm install --frozen-lockfile
+COPY packages/pay-core/src packages/pay-core/src
+COPY packages/pay-core/tsconfig.json packages/pay-core/tsconfig.json
+COPY packages/durable-ledger/src packages/durable-ledger/src
+COPY packages/durable-ledger/tsconfig.json packages/durable-ledger/tsconfig.json
+COPY packages/agent-orchestrator/src packages/agent-orchestrator/src
+COPY packages/agent-orchestrator/tsconfig.json packages/agent-orchestrator/tsconfig.json
+COPY packages/orchestra/src packages/orchestra/src
+COPY packages/orchestra/tsconfig.json packages/orchestra/tsconfig.json
+RUN pnpm -r build
+RUN pnpm install --frozen-lockfile --prod
+
+FROM base AS runtime
+ENV NODE_ENV=production
+COPY --from=build /repo/node_modules /repo/node_modules
+COPY --from=build /repo/package.json /repo/package.json
+COPY --from=build /repo/packages /repo/packages
+COPY packages/pay-core/drizzle /repo/packages/pay-core/drizzle
+COPY packages/durable-ledger/drizzle /repo/packages/durable-ledger/drizzle
+COPY packages/agent-orchestrator/drizzle /repo/packages/agent-orchestrator/drizzle
+COPY packages/orchestra/drizzle /repo/packages/orchestra/drizzle
+COPY packages/orchestra/public /repo/packages/orchestra/public
+USER node
+EXPOSE 3300
+STOPSIGNAL SIGTERM
+CMD ["node", "packages/orchestra/dist/deploy/main.js"]

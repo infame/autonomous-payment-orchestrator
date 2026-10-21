@@ -1,0 +1,30 @@
+# One app, one machine, four processes within the same container.
+app = "replace-me-apo-demo"
+primary_region = "ord"
+kill_signal = "SIGTERM"
+kill_timeout = "20s"
+
+[build]
+  dockerfile = "packages/orchestra/deploy/Dockerfile.single-vm"
+
+[env]
+  PUBLIC_BASE_URL = "https://replace-me-apo-demo.fly.dev"
+
+[http_service]
+  internal_port = 3300
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "3s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"

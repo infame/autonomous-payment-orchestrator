@@ -133,3 +133,25 @@ describe("loadConfig", () => {
     expect(message2).not.toContain("sw0rdfish-secret");
   });
 });
+
+describe("callback configuration", () => {
+  it("is absent by default and accepts an exact configured endpoint", () => {
+    expect(loadConfig(baseEnv()).INNGEST_CALLBACK_URL).toBeUndefined();
+    expect(
+      loadConfig(
+        baseEnv({ INNGEST_CALLBACK_URL: "http://127.0.0.1:3100/api/inngest" }),
+      ).INNGEST_CALLBACK_URL,
+    ).toBe("http://127.0.0.1:3100/api/inngest");
+  });
+  it.each([
+    "not-a-url",
+    "http://localhost/events",
+    "http://localhost/api/inngest?x=1",
+    "http://user:secret@localhost/api/inngest",
+    "ftp://localhost/api/inngest",
+  ])("rejects invalid target %s", (target) => {
+    expect(() => loadConfig(baseEnv({ INNGEST_CALLBACK_URL: target }))).toThrow(
+      ConfigError,
+    );
+  });
+});

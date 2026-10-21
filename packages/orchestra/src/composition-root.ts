@@ -30,6 +30,9 @@ export function createOrchestra(cfg: AppConfig): Orchestra {
   const liveBudgetStore = new PgLiveBudgetStore(db);
 
   const app = createGatewayApp({
+    ...(cfg.INNGEST_CALLBACK_URL !== undefined
+      ? { inngestCallbackUrl: cfg.INNGEST_CALLBACK_URL }
+      : {}),
     grantStore,
     liveBudgetStore,
     adminSecret: cfg.ADMIN_SECRET,

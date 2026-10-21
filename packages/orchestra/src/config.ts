@@ -27,6 +27,33 @@ export const AppConfig = z
     PORT: z.coerce.number().int().min(1).max(65535).default(3300),
     HOST: z.string().min(1).default("0.0.0.0"),
 
+    // Optional, exact internal callback endpoint; standalone gateway stays unchanged.
+    INNGEST_CALLBACK_URL: z
+      .string()
+      .url()
+      .refine(
+        (value) => {
+          let url: URL;
+          try {
+            url = new URL(value);
+          } catch {
+            return false;
+          }
+          return (
+            ["http:", "https:"].includes(url.protocol) &&
+            url.pathname === "/api/inngest" &&
+            !url.search &&
+            !url.hash &&
+            !url.username &&
+            !url.password
+          );
+        },
+        {
+          message:
+            "must be an HTTP(S) /api/inngest endpoint without credentials, query or fragment",
+        },
+      )
+      .optional(),
     AGENT_ORCHESTRATOR_URL: z.string().url(),
     // Absent disables grants entirely, independent of ADMIN_SECRET/
     // GRANT_SIGNING_KEY: with no live instance to proxy to, issuing a grant

@@ -1,4 +1,142 @@
-# Deployment runbook (configuration only)
+# Portfolio deployment: one Fly VM
+
+The primary portfolio topology is **one Fly app with one 1 GB shared-CPU
+machine**, Neon Free PostgreSQL and Inngest Cloud Free. This package prepares
+configuration and a tested image; it does not provision resources or deploy.
+The older five-app configuration is retained below as a separate alternative.
+
+## Runtime and public boundary
+
+Build `deploy/Dockerfile.single-vm` from the repository root. The Node
+supervisor starts pay-core → durable-ledger → mock agent-orchestrator →
+orchestra, waiting for each `/healthz` before starting the next. Each existing
+service applies its own migrations. The first three listeners bind only
+`127.0.0.1` (3000, 3100, 3200); only orchestra binds `0.0.0.0:3300`.
+The image runs as the non-root `node` user. Unexpected exit of any child,
+including exit code zero, tears down all siblings and exits nonzero. There are
+no child restart loops. SIGTERM/SIGINT is forwarded once, with a 15-second
+supervisor deadline and 20-second Fly kill budget.
+
+The gateway exposes the existing browser UI/API and **exactly**
+`/api/inngest` (GET/POST/PUT) for Inngest. Callback requests carry original
+bytes, query, Host and Inngest headers to the fixed internal endpoint. They do
+not receive customer identity, session cookies or the ledger service secret.
+The SDK verifies cloud signatures. Callback request bodies are limited to
+1 MiB, responses to 4 MiB, and the complete transfer to 15 seconds; upstream
+redirects are refused. Other `/api/inngest/*` paths return 404. Ledger and
+pay-core business routes have no public listener. The normal browser API
+remains public through the existing customer-session boundary.
+
+Use a dedicated HTTPS origin such as `https://payments.example.com`, without
+a trailing slash, path, query or fragment. Subfolder hosting is unsupported.
+The supervisor requires `PUBLIC_BASE_URL` and gives it to the SDK as
+`INNGEST_SERVE_ORIGIN`; the callback is registered at that same origin plus
+`/api/inngest`. Preserve the public Host through any proxy, so hosted browser
+cookies remain Secure. Configure the HTTPS certificate and DNS before
+registering the callback. The Fly-provided HTTPS hostname is also usable.
+
+The deployment is deliberately mock-only: child environments force
+`LLM_MODE=mock`, deterministic `PAYMENT_PROVIDER=simulator`,
+`DEMO_CHALLENGES_ENABLED=true` and `DEMO_RESEND_ENABLED=true`. No live agent is
+started; Anthropic/admin/grant credentials and ambient endpoint overrides are
+not forwarded. Payment/workflow/database/journal behavior is real; no real
+money is moved. Only explicit local smoke mode enables the Inngest dev server.
+
+## Prepare resources and deploy (operator action)
+
+1. Provision a Neon database near the Fly region. Use a TLS connection string
+   (`sslmode=require` or the provider's stronger supported verification mode),
+   with a role permitted to create the four schemas and migration journals.
+   Keep the database outside the VM lifecycle. Four services each own a pool;
+   check provider connection limits and use Neon’s pooled endpoint if needed.
+2. Create an Inngest Cloud environment and obtain its event key and signing
+   key. Create one Fly app, replace both placeholders in `fly.demo.toml`, and
+   configure the canonical HTTPS origin. Do not set `INNGEST_BASE_URL`:
+   the cloud event and API origins are different. The supervisor forces
+   `INNGEST_DEV=false` and `INNGEST_API_BASE_URL=https://api.inngest.com`.
+3. Install only these secrets via Fly's secret store: `DATABASE_URL`,
+   `DURABLE_LEDGER_SERVICE_SECRET` (independent random value, at least 32
+   characters), `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`. Use a secret
+   manager or protected stdin (`fly secrets import -a <app>`); do not commit
+   secrets or put their values in shared history/logs. No Anthropic key is
+   needed. Never install `SINGLE_VM_LOCAL_TEST` or `LOCAL_INNGEST_URL` on Fly;
+   local mode is explicitly rejected when `FLY_APP_NAME` is present.
+4. After review/landing and explicit deployment authorization, run from the
+   repository root:
+
+   ```sh
+   fly config validate --config packages/orchestra/deploy/fly.demo.toml
+   fly deploy --config packages/orchestra/deploy/fly.demo.toml --ha=false
+   fly machines list -a <app>
+   ```
+
+   `--ha=false` prevents creating an extra HA machine on a fresh deployment;
+   it does not promise that an existing app has only one. Inspect existing
+   machines first; reconcile to exactly one app machine using the Fly machine
+   controls after identifying surplus machines and any attached volumes.
+   Do not delete unrelated machines or apps. No Fly volume is required.
+
+5. Register/sync `https://<origin>/api/inngest` in Inngest Cloud. Confirm the
+   registered function callback URLs contain the public HTTPS origin, never
+   localhost. Verify signed execution end to end in that environment; local
+   smoke proves dev execution and cloud rejection of unsigned POSTs, not cloud
+   registration, real signing credentials or production DNS/TLS.
+
+`auto_stop_machines=stop`, `auto_start_machines=true`, and minimum zero suit
+10–50 visitors/month. Both browsers and Inngest callbacks can wake the VM.
+Cold starts include four processes, migrations and a potentially sleeping
+Neon database; callbacks can retry. Fly caps service-check startup grace at
+60 seconds, while each supervisor readiness wait is bounded at 120 seconds.
+Monitor cold-start latency and failed checks before sharing the link. A 1 GB
+allocation is a starting point, not a measured capacity guarantee; inspect
+memory/CPU during a challenge. Check current provider limits/pricing before
+provisioning; this topology does not promise a zero-cost Fly deployment.
+
+## Local image verification
+
+Requires Docker Compose, Node 24+, and the public PostgreSQL/Inngest images.
+From the repository root:
+
+```sh
+docker build -f packages/orchestra/deploy/Dockerfile.single-vm -t apo-single-vm:local .
+node packages/orchestra/deploy/smoke.mjs
+```
+
+The smoke harness creates a uniquely named disposable Compose project, uses
+no published host ports, and removes its containers/data in `finally`. It
+uses an isolated internal Docker network with no external egress. The local
+service sets `SINGLE_VM_LOCAL_TEST=true` and uses Inngest v1.44.0; this is an
+explicit test mode, never a fallback for missing cloud keys. A separate
+cloud-mode container uses dummy keys and verifies an unsigned callback is
+rejected without outbound registration. Tests cover all four schema migrations,
+non-root runtime, loopback listeners, assets and browser identity, a completed
+challenge with payment/journal/ledger proof, duplicate delivery, persistence
+across restart, child-crash propagation and bounded graceful shutdown.
+
+## Operations, recovery and post-deploy checks
+
+- Before sharing: check gateway health/assets, cookie Secure attributes,
+  challenge completion and operation evidence, cross-session isolation,
+  invalid/unsigned callback rejection, Inngest's registered origin, and
+  exactly one machine. Recheck after an idle stop/wake cycle. Never expose
+  ports 3000/3100/3200, Postgres, or a dev Inngest console.
+- Inspect Fly service logs and Inngest run history for failures. This is one
+  fault domain: a failed service or deployment interrupts the whole demo.
+  There is no high availability, and deployments may have downtime.
+- Migrations run at boot. Snapshot/backup the database before changing schema;
+  a failed migration stops startup. Do not blindly restart or run two versions
+  against a half-applied migration. This package adds no migrations.
+- Keep the previous reviewed image digest/release. Roll back to that image only
+  if its schema compatibility is known. Image rollback does not undo database
+  changes or completed workflows. Restore a database backup into a separate
+  Neon database/branch, validate it, then deliberately switch the secret and
+  restart the machine. Preserve workflow event identities and reconcile
+  Inngest runs before accepting new demo actions; do not replay uncertain
+  payments as a recovery shortcut.
+
+---
+
+## Alternative: five separate Fly applications (legacy configs)
 
 These files describe a five-app Fly.io topology. They contain valid-looking,
 deliberately non-live `replace-me-*` app names. This repository does not create
