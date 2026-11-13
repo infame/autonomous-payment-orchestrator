@@ -224,6 +224,130 @@ afterEach(() => {
 });
 
 describe("experiment controller response ownership", () => {
+  it.each(["reset", "direct scenario change"])(
+    "clears prior diagnostics before the next ACK after %s",
+    async (transition) => {
+      const doc = testDocument(),
+        next = new TestElement("form"),
+        evidenceButton = new TestElement("button");
+      const first = doc
+        .getElementById("experiment")
+        .querySelectorAll(".challenge-picker")[0]!;
+      next.querySelector("button").dataset.challenge = "permanent_decline";
+      evidenceButton.dataset.utilityPanel = "evidence-details";
+      doc
+        .getElementById("experiment")
+        .selectors.set(".challenge-picker", [first, next]);
+      doc
+        .getElementById("experiment")
+        .selectors.set("[data-utility-panel]", [evidenceButton]);
+      const pending = deferred<Response>(),
+        priorId = "prior-request-unique";
+      let submissions = 0;
+      vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+        if (input === "/ui/challenges")
+          return ++submissions === 1
+            ? Promise.resolve(json({ intent: { id: priorId } }))
+            : pending.promise;
+        if (typeof input === "string" && input.endsWith("/evidence"))
+          return Promise.resolve(json(completeEvidence(priorId)));
+        return Promise.resolve(
+          json({
+            intent: {
+              ...state(priorId, "completed").intent,
+              text: `Recorded source ${priorId}`,
+              clarificationAnswer: `Answer ${priorId}`,
+              proposal: {
+                kind: "propose_payment",
+                amount: 50000,
+                currency: "USD",
+                merchantId: priorId,
+                reasoning: `Proposal ${priorId}`,
+              },
+              policyVerdict: { decision: "allow" },
+            },
+          }),
+        );
+      });
+      mountExperiment(doc);
+      first.fire("submit");
+      await settle();
+      evidenceButton.fire("click");
+      expect(doc.getElementById("evidence-details").hidden).toBe(false);
+      expect(doc.getElementById("backend-state-raw").textContent).toContain(
+        priorId,
+      );
+      expect(doc.getElementById("experiment-status").textContent).toBe(
+        "Payment completed",
+      );
+      const noPriorDiagnostics = () => {
+        for (const id of [
+          "backend-state-raw",
+          "experiment-status",
+          "recorded-source",
+          "recorded-answer",
+          "proposal-amount",
+          "proposal-description",
+          "policy-decision",
+          "policy-explanation",
+          "request-reference",
+          "ledger-ids",
+          "operation-raw",
+        ]) {
+          expect(nodeText(doc.getElementById(id))).not.toContain(priorId);
+        }
+        expect(doc.getElementById("backend-state-raw").textContent).toBe(
+          "No current GET observation.",
+        );
+        expect(doc.getElementById("experiment-status").textContent).not.toBe(
+          "Payment completed",
+        );
+        expect(doc.getElementById("status-indicator").className).toBe(
+          "status-indicator",
+        );
+        expect(doc.getElementById("ledger-balance").className).toBe("");
+        expect(doc.getElementById("ledger-panel").hidden).toBe(true);
+        expect(doc.getElementById("journal-panel").hidden).toBe(true);
+      };
+      if (transition === "reset") {
+        doc.getElementById("new-experiment-action").fire("click");
+        evidenceButton.fire("click");
+        expect(doc.getElementById("evidence-details").hidden).toBe(false);
+        noPriorDiagnostics();
+        expect(doc.getElementById("pending-label").hidden).toBe(true);
+      }
+      next.fire("submit");
+      expect(doc.getElementById("evidence-details").hidden).toBe(false);
+      noPriorDiagnostics();
+      expect(submissions).toBe(2);
+    },
+  );
+  it("clears an executing diagnostic status and pending label on reset", async () => {
+    const doc = testDocument();
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(
+        json(
+          input === "/ui/challenges"
+            ? { intent: { id: "running-reset" } }
+            : typeof input === "string" && input.endsWith("/evidence")
+              ? evidence("running-reset")
+              : state("running-reset"),
+        ),
+      ),
+    );
+    mountExperiment(doc);
+    startChallenge(doc);
+    await settle();
+    expect(doc.getElementById("pending-label").hidden).toBe(false);
+    doc.getElementById("new-experiment-action").fire("click");
+    expect(doc.getElementById("pending-label").hidden).toBe(true);
+    expect(doc.getElementById("experiment-status").textContent).toBe(
+      "No current request state.",
+    );
+    expect(doc.getElementById("backend-state-raw").textContent).not.toContain(
+      "running-reset",
+    );
+  });
   it("keeps workspace slots and previous observations while refreshing without scrolling or stealing focus", async () => {
     const base = testDocument();
     const doc = {

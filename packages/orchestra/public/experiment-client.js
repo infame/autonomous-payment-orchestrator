@@ -1141,6 +1141,22 @@ export function mountExperiment(doc = globalThis.document) {
     );
     text("journal-provenance", plan.provenance);
     if (!intent) {
+      for (const [id, value] of Object.entries({
+        "backend-state-raw": "No current GET observation.",
+        "experiment-status": "No current request state.",
+        "recorded-source": "",
+        "recorded-answer": "",
+        "proposal-amount": "—",
+        "proposal-description": "No proposal yet.",
+        "policy-decision": "Not evaluated",
+        "policy-explanation": "No policy verdict is available yet.",
+      }))
+        text(id, value);
+      el("status-indicator").className = "status-indicator";
+      el("ledger-balance").className = "";
+      show("pending-label", false);
+      show("ledger-panel", false);
+      show("journal-panel", false);
       text("request-reference", "");
       text("attempt-count", "0");
       text("journal-state", "No operation history for this request yet.");
