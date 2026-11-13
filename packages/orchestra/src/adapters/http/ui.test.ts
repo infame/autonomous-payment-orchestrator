@@ -169,7 +169,7 @@ describe("guided payment review", () => {
   };
 
   it("shows only four mock challenges and a separate ordinary live request page", async () => {
-    const mock = String(await renderHome("mock", null));
+    const mock = String(await renderHome("mock", null)).replace(/\s+/g, " ");
     expect(
       mock.match(/class="challenge-picker(?: primary-challenge)?"/g),
     ).toHaveLength(4);
@@ -191,6 +191,24 @@ describe("guided payment review", () => {
     expect(mock).toContain('<details id="other-tests"');
     expect(mock).toContain('<details id="evidence-details" hidden>');
     expect(mock).toMatch(/id="main-result"\s+class="experiment-results"/);
+    expect(mock).toContain("APO is a payment prototype");
+    expect(mock).toContain("independent policy decides");
+    expect(mock).toContain("PostgreSQL, Inngest workflows and ledger");
+    expect(mock).toContain('aria-label="Create payment request and response"');
+    expect(mock).toContain("POST /ui/challenges");
+    expect(mock).toContain("Returned acknowledgement fields");
+    expect(mock).toContain("Latest observed state");
+    expect(mock).toContain("Recorded request");
+    expect(mock).toContain("Mock assistant proposal");
+    expect(mock).toContain("Independent policy");
+    expect(mock).toContain(
+      'aria-label="Repeat operations request and response"',
+    );
+    expect(mock).toContain("Returned batch response fields");
+    expect(
+      mock.indexOf("No new instruction, model proposal, or workflow"),
+    ).toBeLessThan(mock.indexOf('id="repeat-action"'));
+    expect(mock).toContain("What this demonstrates");
     expect(mock).toContain(
       'href="https://infame.dev/projects/autonomous-payment-orchestrator"',
     );

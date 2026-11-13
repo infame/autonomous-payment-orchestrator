@@ -541,6 +541,10 @@ export function paymentPresentation(
         testAssessment(challenge, intent, evidence).tone === "good"
           ? "good"
           : "bad",
+      takeaway:
+        testAssessment(challenge, intent, evidence).tone === "good"
+          ? "The independent policy blocked the unsupported amount before a payment workflow started."
+          : "Policy stopped this request. The selected experiment has not been demonstrated.",
     };
   if (snapshot?.status === "failed")
     return {
@@ -559,6 +563,10 @@ export function paymentPresentation(
         testAssessment(challenge, intent, evidence).tone === "good"
           ? "good"
           : "warn",
+      takeaway:
+        testAssessment(challenge, intent, evidence).tone === "good"
+          ? "The simulated provider declined the payment, and its payment record confirms zero captured."
+          : "A failed payment record does not establish the expected zero-capture result without matching evidence.",
     };
   if (challenge === "duplicates" && intent.status === "completed")
     return {
@@ -584,6 +592,13 @@ export function paymentPresentation(
         verifiedBatch || (!batch && duplicateBaseline(intent, evidence))
           ? "good"
           : "warn",
+      takeaway: !batch
+        ? duplicateBaseline(intent, evidence)
+          ? "One original payment and two ledger entries are confirmed. This is the baseline; repeats have not been tested yet."
+          : "The original payment baseline has not yet been verified."
+        : verifiedBatch
+          ? "In this sequential simulator test, all ten repeats returned the same payment and the two original ledger entry IDs. No additional captured amount or ledger entries were observed."
+          : "The repeat test remains unverified. A saved $500 baseline alone cannot prove that the repeats preserved the payment and ledger entries.",
     };
   if (intent.status === "completed" && capturedEvidence(evidence) !== null)
     return {
@@ -604,6 +619,12 @@ export function paymentPresentation(
         challenge === "temporary_failure"
           ? testAssessment(challenge, intent, evidence).tone
           : "good",
+      takeaway:
+        challenge === "temporary_failure"
+          ? testAssessment(challenge, intent, evidence).tone === "good"
+            ? "Authorization and capture each have a failed call followed by a returned call with the same run and operation key. The workflow recovered in this simulation."
+            : "The payment is recorded, but both planned failure-and-retry sequences have not been demonstrated."
+          : "The payment snapshot and the two ledger entries identify the same captured payment.",
     };
   return {
     paid,
@@ -690,7 +711,10 @@ export function mountExperiment(doc = globalThis.document) {
     selectedDeliveryId = null,
     receiptsFingerprint = "",
     baseline = null,
-    recoveryPending = false;
+    recoveryPending = false,
+    submission = null,
+    latestReadState = "not_read",
+    repeatRequestPath = null;
   function error(message) {
     hasError = true;
     stopPolling();
@@ -699,6 +723,7 @@ export function mountExperiment(doc = globalThis.document) {
     text("read-status", message);
     show("read-status", true);
     show("recovery-action", intent !== null);
+    render();
   }
   function setBusy(value) {
     if (value) focusBeforeAction = doc.activeElement;
@@ -748,7 +773,128 @@ export function mountExperiment(doc = globalThis.document) {
     }
     detail.focus({ preventScroll: true });
   }
+  function renderExchanges() {
+    show("creation-exchange", submission !== null);
+    const requestMeanings = {
+      duplicates: "Preset: create one simulated $500 payment instruction.",
+      temporary_failure:
+        "Preset: start a $500 payment test with temporary provider failures.",
+      inflated_amount:
+        "Preset: test a $5,000 mock proposal against a $500 source request.",
+      permanent_decline:
+        "Preset: start a $600 payment test with a permanent provider decline.",
+    };
+    const ack = submission?.ack;
+    text("create-request-meaning", requestMeanings[submission?.scenario] || "");
+    text("create-request-body", submission?.body || "");
+    text(
+      "create-response-summary",
+      ack
+        ? "The server returned a request reference. The payment outcome is read separately."
+        : submission?.outcome === "unknown"
+          ? "No acknowledgement was received. The payment outcome is unknown; this request will not be sent again automatically."
+          : "Waiting for the server's acknowledgement. No payment outcome is confirmed yet.",
+    );
+    text(
+      "create-response-reference",
+      ack ? `Request reference: ${ack.intent.id}` : "",
+    );
+    show("create-response-reference", Boolean(ack));
+    show("create-response-disclosure", Boolean(ack));
+    text("create-response-raw", ack ? JSON.stringify(ack, null, 2) : "");
+    show("observed-state", Boolean(ack));
+    text(
+      "observed-read-path",
+      ack ? `GET /api/intents/${encodeURIComponent(ack.intent.id)}` : "",
+    );
+    const observed =
+      latestReadState === "available" || latestReadState === "state_available";
+    show("observed-state-fields", observed);
+    show("decision-panels", observed);
+    text(
+      "observed-read-status",
+      latestReadState === "unavailable"
+        ? "The latest GET observation is unavailable. Earlier state is not shown as current."
+        : latestReadState === "available"
+          ? "Read after the POST acknowledgement. This can change as the workflow runs."
+          : latestReadState === "state_available"
+            ? "Request state loaded. Payment and ledger evidence is still being read."
+            : "Waiting for a fresh GET observation.",
+    );
+    const proposal = observed ? intent?.proposal : null;
+    text(
+      "observed-source",
+      observed
+        ? sourceDisplayText(intent?.text || "Not returned", challenge, "mock")
+        : "",
+    );
+    text(
+      "observed-proposal",
+      proposal?.kind === "propose_payment"
+        ? `${formatMoney(proposal.amount, proposal.currency)} to ${proposal.merchantId}.`
+        : proposal?.question ||
+            proposal?.reason ||
+            (observed ? "No proposal returned." : ""),
+    );
+    const policy = observed
+      ? policyPresentation(intent, challenge !== null)
+      : null;
+    text(
+      "observed-policy",
+      policy ? `${policy.label}. ${policy.explanation}` : "",
+    );
+    show("repeat-exchange", batchStarted);
+    text(
+      "repeat-request-path",
+      repeatRequestPath ? `POST ${repeatRequestPath}` : "",
+    );
+    const receipts = batch?.receipts || [];
+    text(
+      "repeat-response-summary",
+      batchRunning && !batch
+        ? "Waiting for the batch response. The repeats are not verified yet."
+        : batch?.unknown
+          ? "No batch response was received. Delivery outcomes are unknown."
+          : batch
+            ? `The server returned ${receipts.length} delivery receipts. Payment and ledger state is read separately below.`
+            : "",
+    );
+    show("repeat-response-disclosure", Array.isArray(batch?.receipts));
+    const responseFields = Array.isArray(batch?.receipts)
+      ? {
+          attempted: batch.attempted,
+          invariantVerified: batch.invariantVerified,
+          receipts: receipts.slice(0, 10).map((receipt) => ({
+            delivery: receipt.delivery,
+            status: receipt.status,
+            reason: receipt.reason,
+            result: receipt.result
+              ? {
+                  capture: {
+                    id: receipt.result.capture?.id,
+                    status: receipt.result.capture?.status,
+                    currency: receipt.result.capture?.currency,
+                    capturedAmount: receipt.result.capture?.capturedAmount,
+                    refundedAmount: receipt.result.capture?.refundedAmount,
+                  },
+                  ledgerOutcome: receipt.result.ledgerOutcome,
+                  unchangedEntries: receipt.result.unchangedEntries,
+                  entryCountBefore: receipt.result.entryCountBefore,
+                  entryCountAfter: receipt.result.entryCountAfter,
+                  originalEntryIds: receipt.result.originalEntryIds,
+                  returnedEntryIds: receipt.result.returnedEntryIds,
+                }
+              : null,
+          })),
+        }
+      : null;
+    text(
+      "repeat-response-raw",
+      responseFields ? JSON.stringify(responseFields, null, 2) : "",
+    );
+  }
   function renderLab() {
+    renderExchanges();
     const paused = polls >= 60 && needsAutomaticRead(intent, evidence);
     show("main-result", Boolean(intent) || busy || hasError);
     show("evidence-details", Boolean(intent));
@@ -824,8 +970,37 @@ export function mountExperiment(doc = globalThis.document) {
       result.detail =
         "The original payment is recorded below. Wait for the receipts before drawing a conclusion about the repeats.";
       result.tone = "";
+      result.takeaway =
+        "The repeat test is still being checked. A complete response and matching payment and ledger evidence are required before drawing a conclusion.";
     }
     if (hasError || paused) result.tone = "warn";
+    if (latestReadState === "unavailable") {
+      result.verdict = "The latest observation is unavailable.";
+      result.detail =
+        "The POST response is retained separately. Current payment and ledger results are not verified.";
+      result.paid = "Unknown";
+      result.state = "Current payment evidence unavailable";
+      result.tone = "warn";
+      result.takeaway =
+        "The latest evidence is unavailable. No current result is verified.";
+    }
+    if (
+      hasError ||
+      paused ||
+      latestReadState === "loading" ||
+      latestReadState === "state_available"
+    ) {
+      result.tone = hasError || paused ? "warn" : "";
+      result.takeaway =
+        hasError || paused
+          ? "The latest evidence is incomplete or unavailable. No current result is verified."
+          : "A fresh observation is still being read. It has not established a new verified result.";
+    }
+    if (hasError && !intent) {
+      result.verdict = "No payment outcome is confirmed.";
+      result.detail =
+        "No request acknowledgement was received. This request will not be repeated automatically.";
+    }
     show("repeat-action-panel", challenge === "duplicates");
     for (const form of root.querySelectorAll(".challenge-picker")) {
       const button = form.querySelector("button");
@@ -880,6 +1055,21 @@ export function mountExperiment(doc = globalThis.document) {
     el("test-assessment").className = `test-outcome ${assessment.tone}`;
     text("actual-amount", result.paid);
     text("actual-state", result.state);
+    const paymentId =
+      evidence?.payment?.availability === "known"
+        ? evidence.payment.snapshot?.id
+        : null;
+    text(
+      "payment-record-id",
+      paymentId ? `Payment record ID: ${paymentId}` : "",
+    );
+    show("payment-record-id", Boolean(paymentId));
+    text(
+      "demonstration-meaning",
+      result.takeaway ||
+        "This request has not yet established a verified payment outcome.",
+    );
+    el("demonstration-panel").className = `demonstration ${result.tone}`;
     text("lab-verdict", result.verdict);
     text("lab-explanation", result.detail);
     el("lab-verdict-panel").className = `lab-verdict ${result.tone}`;
@@ -894,12 +1084,12 @@ export function mountExperiment(doc = globalThis.document) {
     const receipts = batch?.receipts || [];
     text(
       "batch-status",
-      batchRunning
-        ? "Delivering the same completed capture + posting sequentially…"
-        : batch?.unknown
-          ? "Batch response unavailable. Delivery outcomes are unknown."
-          : receipts.length
-            ? `${receipts.filter((r) => r.status !== "not_attempted").length} repeat deliveries attempted; ${receipts.filter((r) => r.status === "fulfilled").length} fulfilled receipts returned; ${receipts.filter((r) => r.status === "unknown").length} unknown; ${receipts.filter((r) => r.status === "failed").length} failed; ${receipts.filter((r) => r.status === "not_attempted").length} not attempted.`
+      batch?.unknown
+        ? "Batch response unavailable. Delivery outcomes are unknown."
+        : receipts.length
+          ? `${receipts.filter((r) => r.status !== "not_attempted").length} repeat deliveries attempted; ${receipts.filter((r) => r.status === "fulfilled").length} fulfilled receipts returned; ${receipts.filter((r) => r.status === "unknown").length} unknown; ${receipts.filter((r) => r.status === "failed").length} failed; ${receipts.filter((r) => r.status === "not_attempted").length} not attempted.`
+          : batchRunning
+            ? "Waiting for the repeat delivery receipts…"
             : "",
     );
     renderDeliveries(receipts);
@@ -1119,20 +1309,18 @@ export function mountExperiment(doc = globalThis.document) {
     show("experiment-error", false);
     batchStarted = true;
     batchRunning = true;
+    repeatRequestPath = `/api/intents/${encodeURIComponent(intent.id)}/redeliver`;
     setBusy(true);
     renderLab();
     try {
-      const response = await requestJson(
-        `/api/intents/${encodeURIComponent(intent.id)}/redeliver`,
-        { method: "POST" },
-      );
+      const response = await requestJson(repeatRequestPath, { method: "POST" });
       if (epoch !== generation) return;
       batch = response;
       await refresh(epoch);
       if (epoch === generation) schedule(epoch);
     } catch (cause) {
       if (epoch === generation) {
-        batch = { unknown: true };
+        if (batch === null) batch = { unknown: true };
         error(cause.message);
       }
     } finally {
@@ -1180,7 +1368,12 @@ export function mountExperiment(doc = globalThis.document) {
     const policy = policyPresentation(intent, challenge !== null);
     text("policy-decision", policy.label);
     text("policy-explanation", policy.explanation);
-    text("backend-state-raw", JSON.stringify({ intent, evidence }, null, 2));
+    text(
+      "backend-state-raw",
+      latestReadState === "available"
+        ? JSON.stringify({ intent, evidence }, null, 2)
+        : "A complete current GET observation is unavailable. Earlier raw state is not shown as current.",
+    );
     const titles = {
       needs_clarification: "Choose the amount to continue",
       needs_approval: "Ready for your decision",
@@ -1357,6 +1550,8 @@ export function mountExperiment(doc = globalThis.document) {
       serial = ++refreshSerial;
     const current = () =>
       epoch === generation && serial === refreshSerial && intent?.id === id;
+    latestReadState = "loading";
+    render();
     let response;
     try {
       response = await requestJson(`/api/intents/${encodeURIComponent(id)}`);
@@ -1365,9 +1560,13 @@ export function mountExperiment(doc = globalThis.document) {
         throw new Error("The service returned an invalid payment state.");
     } catch (cause) {
       if (!current()) return false;
+      latestReadState = "unavailable";
+      evidence = null;
+      render();
       throw cause;
     }
     intent = response.intent;
+    latestReadState = "state_available";
     render();
     try {
       const result = await requestJson(
@@ -1385,11 +1584,13 @@ export function mountExperiment(doc = globalThis.document) {
       )
         throw new Error("The evidence response is incomplete.");
       evidence = result.evidence;
+      latestReadState = "available";
       render();
       return true;
     } catch (cause) {
       if (!current()) return false;
       evidence = null;
+      latestReadState = "unavailable";
       render();
       error(
         `Payment state loaded, but evidence is unavailable. ${cause.message}`,
@@ -1441,6 +1642,7 @@ export function mountExperiment(doc = globalThis.document) {
   }
   async function action(path, body) {
     if (busy) return;
+    const requestBody = body ? new globalThis.URLSearchParams(body) : null;
     const epoch = ++generation;
     stopPolling();
     setBusy(true);
@@ -1453,6 +1655,14 @@ export function mountExperiment(doc = globalThis.document) {
       batch = null;
       baseline = null;
       recoveryPending = false;
+      submission = {
+        scenario: body?.scenario,
+        body: requestBody?.toString() || "",
+        ack: null,
+        outcome: "pending",
+      };
+      latestReadState = "not_read";
+      repeatRequestPath = null;
       text("read-status", "");
       renderLab();
       text("experiment-status", "Starting an isolated simulated payment…");
@@ -1465,15 +1675,23 @@ export function mountExperiment(doc = globalThis.document) {
         ...(body
           ? {
               headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              body: new globalThis.URLSearchParams(body),
+              body: requestBody,
             }
           : {}),
       });
       if (epoch !== generation) return;
-      if (!result.intent?.id)
+      if (
+        typeof result.intent?.id !== "string" ||
+        !result.intent.id ||
+        result.intent.id.length > 200
+      )
         throw new Error(
           "The action returned an invalid payment reference. Check the current state before retrying.",
         );
+      if (submission) {
+        submission.ack = { intent: { id: result.intent.id } };
+        submission.outcome = "received";
+      }
       const newRequest = !intent || intent.id !== result.intent.id;
       if (newRequest)
         intent = { id: result.intent.id, status: "unknown", text: "" };
@@ -1490,7 +1708,10 @@ export function mountExperiment(doc = globalThis.document) {
         "Backend state updated. Review the result on this page.",
       );
     } catch (cause) {
-      if (epoch === generation) error(cause.message);
+      if (epoch === generation) {
+        if (submission && !submission.ack) submission.outcome = "unknown";
+        error(cause.message);
+      }
     } finally {
       if (epoch === generation) {
         setBusy(false);
@@ -1576,6 +1797,9 @@ export function mountExperiment(doc = globalThis.document) {
     polls = 0;
     hasError = false;
     recoveryPending = false;
+    submission = null;
+    latestReadState = "not_read";
+    repeatRequestPath = null;
     selectedAttemptId = null;
     selectedDeliveryId = null;
     show("experiment-error", false);

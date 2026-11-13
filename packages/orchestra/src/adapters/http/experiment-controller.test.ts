@@ -179,6 +179,27 @@ function completeEvidence(id: string) {
     },
   };
 }
+function completedBatch(id: string) {
+  const current = completeEvidence(id).evidence;
+  return {
+    attempted: 10,
+    invariantVerified: true,
+    receipts: Array.from({ length: 10 }, (_, index) => ({
+      delivery: index + 1,
+      status: "fulfilled",
+      reason: null,
+      result: {
+        capture: current.payment.snapshot,
+        ledgerOutcome: "already_posted",
+        unchangedEntries: true,
+        entryCountBefore: 2,
+        entryCountAfter: 2,
+        originalEntryIds: ["entry-0", "entry-1"],
+        returnedEntryIds: ["entry-1", "entry-0"],
+      },
+    })),
+  };
+}
 async function settle() {
   for (let i = 0; i < 60; i++) await Promise.resolve();
 }
@@ -192,6 +213,172 @@ afterEach(() => {
 });
 
 describe("experiment controller response ownership", () => {
+  it("keeps the actual id-only POST acknowledgement separate from later GET observations", async () => {
+    const doc = testDocument();
+    const form = doc
+      .getElementById("experiment")
+      .querySelectorAll(".challenge-picker")[0]!;
+    form.querySelector("button").dataset.challenge = "duplicates";
+    const post = deferred<Response>(),
+      firstGet = deferred<Response>();
+    let reads = 0,
+      postedBody = "";
+    const observed = {
+      ...state("request-one").intent,
+      text: "Pay vendor $500.00. <script>actual stored source</script>",
+      proposal: {
+        kind: "propose_payment",
+        amount: 50000,
+        currency: "USD",
+        merchantId: "vendor",
+      },
+      policyVerdict: {
+        decision: "needs_approval",
+        reason: "above_auto_approve_threshold",
+      },
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, options) => {
+      if (input === "/ui/challenges") {
+        postedBody =
+          options?.body instanceof URLSearchParams
+            ? options.body.toString()
+            : "unexpected body";
+        return post.promise;
+      }
+      if (input === "/api/intents/request-one")
+        return ++reads === 1
+          ? firstGet.promise
+          : Promise.resolve(
+              json({ intent: { ...observed, status: "completed" } }),
+            );
+      if (input === "/api/intents/request-one/evidence")
+        return Promise.resolve(json(completeEvidence("request-one")));
+      throw new Error("Unexpected request");
+    });
+    const controller = mountExperiment(doc);
+    expect(doc.getElementById("creation-exchange").hidden).toBe(true);
+    form.fire("submit");
+    expect(postedBody).toBe("scenario=duplicates");
+    expect(doc.getElementById("create-request-body").textContent).toBe(
+      postedBody,
+    );
+    expect(doc.getElementById("create-response-summary").textContent).toContain(
+      "Waiting for the server's acknowledgement",
+    );
+    expect(doc.getElementById("observed-state").hidden).toBe(true);
+    post.resolve(
+      json({
+        intent: { id: "request-one" },
+        credentials: "must-not-be-captured",
+      }),
+    );
+    await settle();
+    const ack = doc.getElementById("create-response-raw").textContent;
+    expect(JSON.parse(ack)).toEqual({ intent: { id: "request-one" } });
+    expect(ack).not.toContain("credentials");
+    expect(doc.getElementById("create-response-summary").textContent).toContain(
+      "payment outcome is read separately",
+    );
+    expect(doc.getElementById("observed-state-fields").hidden).toBe(true);
+    firstGet.resolve(json({ intent: observed }));
+    await settle();
+    expect(doc.getElementById("observed-source").textContent).toBe(
+      observed.text,
+    );
+    expect(doc.getElementById("observed-proposal").textContent).toBe(
+      "500.00 USD to vendor.",
+    );
+    expect(doc.getElementById("observed-policy").textContent).toContain(
+      "Simulation authorized",
+    );
+    expect(doc.getElementById("observed-policy").textContent).toContain(
+      "approval required by policy",
+    );
+    expect(doc.getElementById("payment-record-id").textContent).toBe(
+      "Payment record ID: payment-request-one",
+    );
+    await controller.refresh();
+    expect(doc.getElementById("create-response-raw").textContent).toBe(ack);
+    expect(doc.getElementById("create-response-reference").textContent).toBe(
+      "Request reference: request-one",
+    );
+    expect(doc.getElementById("demonstration-meaning").textContent).toContain(
+      "baseline; repeats have not been tested yet",
+    );
+    expect(
+      JSON.parse(doc.getElementById("backend-state-raw").textContent),
+    ).toMatchObject({ intent: { text: observed.text } });
+  });
+  it("retains actual replay receipts through a failed GET and verifies only after read-only recovery", async () => {
+    const doc = testDocument();
+    const form = doc
+      .getElementById("experiment")
+      .querySelectorAll(".challenge-picker")[0]!;
+    form.querySelector("button").dataset.challenge = "duplicates";
+    let failRead = false;
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, options) => {
+      if (typeof input !== "string") throw new Error("Expected string path");
+      calls.push(`${options?.method || "GET"} ${input}`);
+      if (input === "/ui/challenges")
+        return Promise.resolve(json({ intent: { id: "trace" } }));
+      if (input.endsWith("/redeliver")) {
+        failRead = true;
+        return Promise.resolve(
+          json({ ...completedBatch("trace"), credentials: "not-for-display" }),
+        );
+      }
+      if (failRead) throw new Error("GET unavailable");
+      return Promise.resolve(
+        json(
+          input.endsWith("/evidence")
+            ? completeEvidence("trace")
+            : state("trace", "completed"),
+        ),
+      );
+    });
+    mountExperiment(doc);
+    form.fire("submit");
+    await settle();
+    const ack = doc.getElementById("create-response-raw").textContent;
+    doc.getElementById("repeat-action").fire("click");
+    await settle();
+    const batch = doc.getElementById("repeat-response-raw").textContent;
+    const parsedBatch = JSON.parse(batch) as { receipts: unknown[] };
+    expect(parsedBatch.receipts).toHaveLength(10);
+    expect(batch).not.toContain("credentials");
+    expect(doc.getElementById("repeat-response-summary").textContent).toContain(
+      "returned 10 delivery receipts",
+    );
+    expect(doc.getElementById("repeat-request-path").textContent).toBe(
+      "POST /api/intents/trace/redeliver",
+    );
+    expect(doc.getElementById("actual-amount").textContent).toBe("Unknown");
+    expect(doc.getElementById("observed-state-fields").hidden).toBe(true);
+    expect(doc.getElementById("backend-state-raw").textContent).toContain(
+      "Earlier raw state is not shown as current",
+    );
+    expect(doc.getElementById("demonstration-meaning").textContent).toContain(
+      "No current result is verified",
+    );
+    expect(doc.getElementById("before-repeats").textContent).toContain(
+      "500.00 USD",
+    );
+    expect(doc.getElementById("create-response-raw").textContent).toBe(ack);
+    failRead = false;
+    const beforeRead = calls.length;
+    doc.getElementById("recovery-action").fire("click");
+    await settle();
+    expect(
+      calls.slice(beforeRead).every((call) => call.startsWith("GET ")),
+    ).toBe(true);
+    expect(doc.getElementById("repeat-response-raw").textContent).toBe(batch);
+    expect(doc.getElementById("create-response-raw").textContent).toBe(ack);
+    expect(doc.getElementById("demonstration-meaning").textContent).toContain(
+      "In this sequential simulator test",
+    );
+    expect(calls.filter((call) => call.startsWith("POST "))).toHaveLength(2);
+  });
   it("requires an explicit reset after an unknown original submission", async () => {
     const doc = testDocument();
     const form = doc
@@ -206,12 +393,26 @@ describe("experiment controller response ownership", () => {
     await settle();
     expect(form.querySelector("button").disabled).toBe(true);
     expect(doc.getElementById("main-result").hidden).toBe(false);
+    expect(doc.getElementById("create-response-summary").textContent).toContain(
+      "No acknowledgement was received",
+    );
+    expect(doc.getElementById("create-response-raw").textContent).toBe("");
+    expect(doc.getElementById("observed-state").hidden).toBe(true);
     form.fire("submit");
     await settle();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     doc.getElementById("new-experiment-action").fire("click");
     expect(form.querySelector("button").disabled).toBe(false);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(doc.getElementById("creation-exchange").hidden).toBe(true);
+    form.querySelector("button").dataset.challenge = "permanent_decline";
+    form.fire("submit");
+    await settle();
+    expect(doc.getElementById("create-request-body").textContent).toBe(
+      "scenario=permanent_decline",
+    );
+    expect(doc.getElementById("create-response-raw").textContent).toBe("");
+    expect(doc.getElementById("repeat-exchange").hidden).toBe(true);
   });
   it.each([
     { phase: "state", outcome: "failure" },
@@ -260,12 +461,18 @@ describe("experiment controller response ownership", () => {
       startChallenge(doc);
       await settle();
       expect(doc.getElementById("ledger-ids").textContent).toContain("entry-b");
+      expect(
+        JSON.parse(doc.getElementById("create-response-raw").textContent),
+      ).toEqual({ intent: { id: "b" } });
       expect(doc.getElementById("experiment-error").hidden).toBe(true);
       if (outcome === "failure")
         stale.reject(new Error("obsolete offline request"));
       else stale.resolve(json(evidence("obsolete")));
       await settle();
       expect(doc.getElementById("ledger-ids").textContent).toContain("entry-b");
+      expect(
+        JSON.parse(doc.getElementById("create-response-raw").textContent),
+      ).toEqual({ intent: { id: "b" } });
       expect(doc.getElementById("experiment-error").hidden).toBe(true);
       expect(doc.getElementById("experiment-status").textContent).toBe(
         "Payment workflow is running",
@@ -817,6 +1024,9 @@ describe("experiment controller response ownership", () => {
     );
     expect(doc.getElementById("batch-status").textContent).toContain(
       "1 unknown; 0 failed; 9 not attempted",
+    );
+    expect(doc.getElementById("demonstration-meaning").textContent).toContain(
+      "repeat test remains unverified",
     );
     expect(doc.getElementById("recovery-action").hidden).toBe(false);
     expect(doc.getElementById("repeat-delivery-section").hidden).toBe(false);

@@ -79,6 +79,7 @@ const client = (await import(
     verdict: string;
     detail: string;
     tone: string;
+    takeaway?: string;
   };
   summarizeLedger(
     entries: readonly {
@@ -206,6 +207,9 @@ describe("same-page experiment client", () => {
     );
     expect(declined.paid).toBe("0.00 USD");
     expect(declined.state).toBe("Payment refused · $0 captured");
+    expect(declined.takeaway).toContain(
+      "payment record confirms zero captured",
+    );
     const unknown = client.paymentPresentation(
       { status: "failed" },
       { journal: { attempts: [] } },
@@ -233,6 +237,9 @@ describe("same-page experiment client", () => {
     expect(nonzero.paid).toBe("25.00 USD");
     expect(nonzero.state).not.toContain("$0 captured");
     expect(nonzero.tone).not.toBe("good");
+    expect(nonzero.takeaway).not.toContain(
+      "payment record confirms zero captured",
+    );
   });
   it("only verifies the duplicate result with ten matching receipts and authoritative money/ledger proof", () => {
     const intent = { id: "original", status: "completed" };
@@ -284,10 +291,56 @@ describe("same-page experiment client", () => {
       invariantVerified: true,
       receipts: Array.from({ length: 10 }, () => receipt),
     };
-    expect(
-      client.paymentPresentation(intent, current, batch, "duplicates", baseline)
-        .tone,
-    ).toBe("good");
+    const verified = client.paymentPresentation(
+      intent,
+      current,
+      batch,
+      "duplicates",
+      baseline,
+    );
+    expect(verified.tone).toBe("good");
+    expect(verified.takeaway).toContain("In this sequential simulator test");
+    expect(verified.takeaway).toContain("two original ledger entry IDs");
+    const original = client.paymentPresentation(
+      intent,
+      { ...current, resendAvailable: true },
+      null,
+      "duplicates",
+    );
+    expect(original.takeaway).toContain(
+      "baseline; repeats have not been tested yet",
+    );
+    for (const conflicting of [
+      { ...current, ledger: { ...current.ledger, proof: null } },
+      {
+        ...current,
+        payment: {
+          ...current.payment,
+          snapshot: { ...current.payment.snapshot, id: "other-payment" },
+        },
+      },
+      {
+        ...current,
+        ledger: {
+          ...current.ledger,
+          entries: current.ledger.entries.map((entry) => ({
+            ...entry,
+            id: `new-${entry.id}`,
+          })),
+        },
+      },
+    ]) {
+      const result = client.paymentPresentation(
+        intent,
+        conflicting,
+        batch,
+        "duplicates",
+        baseline,
+      );
+      expect(result.tone).toBe("warn");
+      expect(result.takeaway).toContain("remains unverified");
+      expect(result.takeaway).not.toContain("No additional captured amount");
+    }
     expect(
       client.paymentPresentation(
         intent,
@@ -689,6 +742,17 @@ describe("same-page experiment client", () => {
       "temporary_failure",
     );
     expect(missingRecovery.tone).toBe("warn");
+    expect(missingRecovery.takeaway).toContain(
+      "both planned failure-and-retry sequences have not been demonstrated",
+    );
+    expect(
+      client.paymentPresentation(
+        { status: "completed" },
+        evidence,
+        null,
+        "temporary_failure",
+      ).takeaway,
+    ).toContain("workflow recovered in this simulation");
     expect(missingRecovery.verdict).toContain(
       "recovery evidence is incomplete",
     );

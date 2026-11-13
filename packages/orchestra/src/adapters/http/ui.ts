@@ -209,13 +209,31 @@ const STYLE = raw(`<style>
 #experiment ::selection{background:#bfdbfe;color:#0f172a}
 @media(max-width:700px){#experiment .main-steps{display:block}#experiment .main-action{margin-top:24px}#experiment .lab-attacks{grid-template-columns:1fr}#experiment .main-steps button,#experiment .result-actions button{width:100%}#experiment .result-actions{flex-direction:column}#experiment .lab-verdict{padding:16px}#experiment .lab-heading{margin-bottom:24px}#experiment h1{font-size:2rem}}
 
+#experiment .exchange{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:28px;border-block:1px solid #cbd5e1;padding:20px 0;margin:0 0 24px}
+#experiment .exchange h3{font-size:1rem;margin:0 0 10px}
+#experiment .exchange code{font-size:.85rem;overflow-wrap:anywhere}
+#experiment .exchange p{font-size:.9rem;margin:10px 0 0;max-width:65ch}
+#experiment .exchange-response{border-left:1px solid #cbd5e1;padding-left:28px}
+#experiment .exchange details{margin-top:12px;padding-top:8px}
+#experiment .observed-state{margin-top:20px;padding-top:16px;border-top:1px solid #e2e8f0}
+#experiment .observed-state h4{margin:0 0 6px;font-size:.95rem}
+#experiment .observed-fields{display:grid;gap:12px;margin:14px 0 0}
+#experiment .observed-fields dt{font-size:.8rem;color:#475569}
+#experiment .observed-fields dd{font-size:.9rem;margin:2px 0 0;overflow-wrap:anywhere;white-space:pre-wrap}
+#experiment #repeat-action-panel{margin:28px 0 20px;padding-top:20px;border-top:1px solid #cbd5e1}
+#experiment #payment-record-id{overflow-wrap:anywhere;font-size:.8rem}
+#experiment .demonstration{margin-top:24px}
+#experiment .demonstration h3{font-size:1rem;margin-bottom:6px}
+#experiment .demonstration p{font-size:.95rem;max-width:70ch;margin-bottom:0}
+@media(max-width:700px){#experiment .exchange{grid-template-columns:1fr;gap:20px}#experiment .exchange-response{border-left:0;border-top:1px solid #e2e8f0;padding-left:0;padding-top:20px}#experiment #repeat-action-panel button{width:100%}}
+
 </style>`);
 
 function modeBanner(mode: LlmMode, remainingCalls: number | null) {
   return mode === "mock"
     ? html`<div class="banner">
-        Simulation: mock reasoning and a simulated payment provider. No real
-        money moves.
+        Simulation: mock reasoning and payment provider. Real HTTP, PostgreSQL,
+        Inngest workflows and ledger. No real money moves.
       </div>`
     : html`<div class="banner banner-live">
         Live mode — real
@@ -303,8 +321,9 @@ Pay the vendor $1,200.00 for consulting.</textarea
         <div class="lab-heading">
           <h1>Try to make it pay twice.</h1>
           <p>
-            Make one simulated $500 payment, then retry that same payment ten
-            times. Compare the captured amount and payment records.
+            APO is a payment prototype. An assistant proposes a payment,
+            independent policy decides whether it may proceed, and a workflow
+            executes it and records the result.
           </p>
         </div>
         <section class="main-steps" aria-label="Payment experiment">
@@ -314,20 +333,11 @@ Pay the vendor $1,200.00 for consulting.</textarea
             action="/ui/challenges"
           >
             <input type="hidden" name="scenario" value="duplicates" />
-            <p class="step-label">1. Make the original payment</p>
+            <h2 class="step-label">1. Create one payment</h2>
             <button type="submit" data-challenge="duplicates">
               Make one $500 payment
             </button>
           </form>
-          <section id="repeat-action-panel" class="main-action" hidden>
-            <h2>2. Try the same payment again</h2>
-            <p id="repeat-next">
-              Wait for the original payment to be confirmed.
-            </p>
-            <button id="repeat-action" type="button" disabled>
-              Retry the same payment 10 times
-            </button>
-          </section>
         </section>
         <p id="client-message" role="status">No experiment has run yet.</p>
         <div id="experiment-error" class="notice bad" role="alert" hidden></div>
@@ -337,16 +347,103 @@ Pay the vendor $1,200.00 for consulting.</textarea
           aria-label="Experiment result"
           hidden
         >
+          <section
+            id="creation-exchange"
+            class="exchange"
+            aria-label="Create payment request and response"
+            hidden
+          >
+            <div class="exchange-request">
+              <h3>Request</h3>
+              <code>POST /ui/challenges</code>
+              <p id="create-request-meaning"></p>
+              <p>Form body: <code id="create-request-body"></code></p>
+            </div>
+            <div class="exchange-response">
+              <h3>Response</h3>
+              <p id="create-response-summary"></p>
+              <code id="create-response-reference" hidden></code>
+              <details id="create-response-disclosure" hidden>
+                <summary>Returned acknowledgement fields</summary>
+                <pre id="create-response-raw"></pre>
+              </details>
+              <section id="observed-state" class="observed-state" hidden>
+                <h4>Latest observed state</h4>
+                <code id="observed-read-path"></code>
+                <p id="observed-read-status" class="muted"></p>
+                <dl id="observed-state-fields" class="observed-fields" hidden>
+                  <div>
+                    <dt>Recorded request</dt>
+                    <dd id="observed-source"></dd>
+                  </div>
+                  <div>
+                    <dt>Mock assistant proposal</dt>
+                    <dd id="observed-proposal"></dd>
+                  </div>
+                  <div>
+                    <dt>Independent policy</dt>
+                    <dd id="observed-policy"></dd>
+                  </div>
+                </dl>
+              </section>
+            </div>
+          </section>
           <section id="lab-verdict-panel" class="lab-verdict" role="status">
             <h2 id="lab-verdict">Waiting for a result</h2>
             <p id="lab-explanation"></p>
-            <p id="batch-status"></p>
             <div class="result-payment">
-              <span>Captured amount</span>
+              <span>Latest observed capture</span>
               <strong id="actual-amount">Unknown</strong>
               <p id="actual-state"></p>
+              <p id="payment-record-id" hidden></p>
             </div>
             <p id="pending-label" hidden>Waiting for backend confirmation</p>
+          </section>
+          <section id="repeat-action-panel" class="main-action" hidden>
+            <h2>2. Repeat the original operations</h2>
+            <p>
+              The original operation keys identify these requests as retries.
+              They should return the existing payment and accounting records
+              instead of creating another charge.
+            </p>
+            <p>
+              Repeat the original capture and ledger posting with the same
+              operation keys. No new instruction, model proposal, or workflow.
+            </p>
+            <p id="repeat-next">
+              Wait for the original payment to be confirmed.
+            </p>
+            <button id="repeat-action" type="button" disabled>
+              Retry the same payment 10 times
+            </button>
+          </section>
+          <section
+            id="repeat-exchange"
+            class="exchange"
+            aria-label="Repeat operations request and response"
+            hidden
+          >
+            <div class="exchange-request">
+              <h3>Request</h3>
+              <code id="repeat-request-path"></code>
+              <p>
+                Repeat capture and ledger posting for the original payment ten
+                times, using its original operation keys.
+              </p>
+              <p class="muted">
+                No new payment instruction, model proposal, or workflow is
+                created. This POST has no request body.
+              </p>
+            </div>
+            <div class="exchange-response">
+              <h3>Response</h3>
+              <p id="repeat-response-summary"></p>
+              <p id="batch-status"></p>
+              <details id="repeat-response-disclosure" hidden>
+                <summary>Returned batch response fields</summary>
+                <pre id="repeat-response-raw"></pre>
+              </details>
+            </div>
           </section>
           <section id="duplicate-proof" class="panel" hidden>
             <h3>Before → after the ten retries</h3>
@@ -357,6 +454,10 @@ Pay the vendor $1,200.00 for consulting.</textarea
               <summary>Recorded baseline before retries</summary>
               <pre id="baseline-raw">No baseline yet.</pre>
             </details>
+          </section>
+          <section id="demonstration-panel" class="demonstration">
+            <h3>What this demonstrates</h3>
+            <p id="demonstration-meaning"></p>
           </section>
           <div class="result-actions">
             <button id="recovery-action" type="button" class="secondary" hidden>
@@ -506,7 +607,7 @@ Pay the vendor $1,200.00 for consulting.</textarea
               <pre id="batch-receipts" tabindex="-1">No batch attempted.</pre>
             </details>
           </section>
-          <div class="decision-panels">
+          <div id="decision-panels" class="decision-panels">
             <section class="panel">
               <h3>
                 ${mode === "mock" ? "Simulated assistant proposal" : "Assistant proposal"}
