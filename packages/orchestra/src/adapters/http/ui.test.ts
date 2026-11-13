@@ -170,7 +170,9 @@ describe("guided payment review", () => {
 
   it("shows only four mock challenges and a separate ordinary live request page", async () => {
     const mock = String(await renderHome("mock", null));
-    expect(mock.match(/class="challenge-picker"/g)).toHaveLength(4);
+    expect(
+      mock.match(/class="challenge-picker(?: primary-challenge)?"/g),
+    ).toHaveLength(4);
     for (const removed of [
       "Manual tools",
       "Single exact resend",
@@ -180,11 +182,17 @@ describe("guided payment review", () => {
       "Inspect the evidence",
     ])
       expect(mock).not.toContain(removed);
-    expect(mock.indexOf("Recorded operations")).toBeLessThan(
-      mock.indexOf("Before → after"),
+    expect(mock.indexOf("Before → after")).toBeLessThan(
+      mock.indexOf("Recorded operations"),
     );
     expect(mock.indexOf("Recorded operations")).toBeLessThan(
       mock.indexOf("Simulated assistant proposal"),
+    );
+    expect(mock).toContain('<details id="other-tests"');
+    expect(mock).toContain('<details id="evidence-details" hidden>');
+    expect(mock).toMatch(/id="main-result"\s+class="experiment-results"/);
+    expect(mock).toContain(
+      'href="https://infame.dev/projects/autonomous-payment-orchestrator"',
     );
     const live = String(await renderHome("live", 2));
     expect(live).toContain('action="/ui/intents"');

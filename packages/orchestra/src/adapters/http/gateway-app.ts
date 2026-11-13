@@ -36,6 +36,10 @@ const GRANT_MAX_CALLS_MAX = 1000;
 
 /** Default timeout for a proxied upstream request. Long enough for a mock-mode call (deterministic, in-process) and for approve/reject/GET against either instance; NOT long enough for a real Anthropic call, which is why the two LLM-calling routes get `LLM_UPSTREAM_TIMEOUT_MS` instead — see `app.all("/api/*")`. */
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 15_000;
+/** Ten sequential simulator deliveries have a 55s batch limit downstream. */
+const REDELIVERY_UPSTREAM_TIMEOUT_MS = 65_000;
+/** Same 4 MiB response ceiling used by the callback transport. */
+const MAX_REDELIVERY_RESPONSE_BYTES = 4_194_304;
 /** Timeout for the two routes that reach a real model in live mode (`POST /intents`, `POST /intents/:id/clarify`) — generous enough for a slow Anthropic response without pinning a gateway socket forever on a hung upstream. */
 const LLM_UPSTREAM_TIMEOUT_MS = 120_000;
 
@@ -147,6 +151,8 @@ export interface GatewayAppDeps {
   readonly defaultUpstreamTimeoutMs?: number;
   /** Overrides `LLM_UPSTREAM_TIMEOUT_MS` — same reasoning as `defaultUpstreamTimeoutMs`. */
   readonly llmUpstreamTimeoutMs?: number;
+  /** Test-only override for the mock-only sequential redelivery budget. */
+  readonly redeliveryUpstreamTimeoutMs?: number;
 }
 
 /** A transport-level failure raised directly by this HTTP adapter (bad JSON, an oversized body, an upstream timeout) — mapped to its own status by `app.onError` below. Mirrors the sibling packages' own `HttpError` shape. */
@@ -377,6 +383,7 @@ async function fetchUpstream(
   url: URL,
   init: RequestInit,
   timeoutMs: number,
+  completeRedeliveryResponse = false,
 ): Promise<Response> {
   const controller = new AbortController();
   let timedOut = false;
@@ -385,7 +392,13 @@ async function fetchUpstream(
     controller.abort();
   }, timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    if (!completeRedeliveryResponse) return response;
+    const body = await readRedeliveryResponse(response, controller.signal);
+    return new Response(body, {
+      status: response.status,
+      headers: response.headers,
+    });
   } catch (err) {
     if (timedOut) {
       throw new UpstreamTimeoutError(
@@ -396,6 +409,68 @@ async function fetchUpstream(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The replay's budget covers response bytes as well as response headers. */
+async function readRedeliveryResponse(
+  response: Response,
+  signal: AbortSignal,
+): Promise<ArrayBuffer> {
+  if (
+    Number(response.headers.get("content-length")) >
+    MAX_REDELIVERY_RESPONSE_BYTES
+  ) {
+    void response.body?.cancel().catch(() => {});
+    throw new HttpError(
+      502,
+      "upstream_response_too_large",
+      "The upstream response is too large",
+    );
+  }
+  if (!response.body) return new ArrayBuffer(0);
+  interface ResponseBodyReader {
+    read(): Promise<{ done: boolean; value?: Uint8Array }>;
+    cancel(): Promise<void>;
+    releaseLock(): void;
+  }
+  const reader = response.body.getReader() as unknown as ResponseBodyReader;
+  const abort = () => {
+    void reader.cancel().catch(() => {});
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      if (signal.aborted)
+        throw new UpstreamTimeoutError("Redelivery response timed out");
+      const { done, value } = await reader.read();
+      if (signal.aborted)
+        throw new UpstreamTimeoutError("Redelivery response timed out");
+      if (done) break;
+      if (value === undefined) continue;
+      size += value.byteLength;
+      if (size > MAX_REDELIVERY_RESPONSE_BYTES) {
+        void reader.cancel().catch(() => {});
+        throw new HttpError(
+          502,
+          "upstream_response_too_large",
+          "The upstream response is too large",
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    signal.removeEventListener("abort", abort);
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
 }
 
 type UpstreamResolution =
@@ -637,6 +712,8 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
     deps.defaultUpstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
   const llmUpstreamTimeoutMs =
     deps.llmUpstreamTimeoutMs ?? LLM_UPSTREAM_TIMEOUT_MS;
+  const redeliveryUpstreamTimeoutMs =
+    deps.redeliveryUpstreamTimeoutMs ?? REDELIVERY_UPSTREAM_TIMEOUT_MS;
 
   async function renderUiError(
     c: Context,
@@ -1091,6 +1168,10 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
     // call nor the global daily allowance, and must never reach upstream.
     const isBudgeted =
       upstream.isLive && isLlmCallingRoute(c.req.method, target.pathname);
+    const isMockRedelivery =
+      !upstream.isLive &&
+      c.req.method === "POST" &&
+      /^\/intents\/[^/]+\/redeliver$/.test(target.pathname);
     if (isBudgeted) {
       const claim = await claimLiveBudget(deps, upstream.grant.jti, now);
       if (!claim.ok) {
@@ -1114,7 +1195,12 @@ export function createGatewayApp(deps: GatewayAppDeps): Hono {
         headers,
         ...(body !== undefined ? { body } : {}),
       },
-      isBudgeted ? llmUpstreamTimeoutMs : defaultUpstreamTimeoutMs,
+      isBudgeted
+        ? llmUpstreamTimeoutMs
+        : isMockRedelivery
+          ? redeliveryUpstreamTimeoutMs
+          : defaultUpstreamTimeoutMs,
+      isMockRedelivery,
     );
 
     // Returning `upstreamRes` directly would DISCARD any `Set-Cookie` this

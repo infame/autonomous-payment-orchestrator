@@ -114,8 +114,8 @@ export function createLedgerApp(deps: LedgerAppDeps): Hono {
       await evidence.resend(EventIdParam.parse(c.req.param("eventId")), {
         signal: (
           AbortSignal as unknown as { timeout(ms: number): AbortSignal }
-        ).timeout(1200),
-        timeoutMs: 1000,
+        ).timeout(4_500),
+        timeoutMs: 3_000,
       }),
     );
   });

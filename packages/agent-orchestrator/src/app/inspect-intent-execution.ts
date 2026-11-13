@@ -72,7 +72,7 @@ export class InspectIntentExecution {
     };
     const receipts: Receipt[] = [];
     const deadline =
-      Date.now() + Math.min(9000, this.batchOptions?.deadlineMs ?? 9000);
+      Date.now() + Math.min(55_000, this.batchOptions?.deadlineMs ?? 55_000);
     let baseline: ResendResult | null = null;
     for (let delivery = 1; delivery <= 10; delivery++) {
       const remaining = deadline - Date.now();
@@ -89,8 +89,8 @@ export class InspectIntentExecution {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const timeoutMs = Math.min(
-          800,
-          this.batchOptions?.perCallMs ?? 800,
+          5_000,
+          this.batchOptions?.perCallMs ?? 5_000,
           remaining,
         );
         const result = await Promise.race([

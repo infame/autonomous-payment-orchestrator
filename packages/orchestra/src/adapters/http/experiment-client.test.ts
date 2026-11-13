@@ -214,6 +214,25 @@ describe("same-page experiment client", () => {
     );
     expect(unknown.paid).toBe("Unknown");
     expect(unknown.tone).not.toBe("good");
+    const nonzero = client.paymentPresentation(
+      { status: "failed" },
+      {
+        payment: {
+          availability: "known",
+          snapshot: {
+            status: "failed",
+            capturedAmount: 2500,
+            currency: "USD",
+          },
+        },
+        ledger: { proof: null, entries: [] },
+      },
+      null,
+      "permanent_decline",
+    );
+    expect(nonzero.paid).toBe("25.00 USD");
+    expect(nonzero.state).not.toContain("$0 captured");
+    expect(nonzero.tone).not.toBe("good");
   });
   it("only verifies the duplicate result with ten matching receipts and authoritative money/ledger proof", () => {
     const intent = { id: "original", status: "completed" };
@@ -236,13 +255,23 @@ describe("same-page experiment client", () => {
       },
       ledger: {
         proof: { paymentId: "p", currency: "USD", capturedAmount: 50000 },
-        entries: [{ id: "debit" }, { id: "credit" }],
+        entries: ["debit", "credit"].map((direction) => ({
+          id: direction,
+          direction,
+          paymentId: "p",
+          amount: { amount: 50000, currency: "USD" },
+        })),
       },
     };
     const receipt = {
       status: "fulfilled",
       result: {
-        capture: { id: "p" },
+        capture: {
+          id: "p",
+          status: "captured",
+          currency: "USD",
+          capturedAmount: 50000,
+        },
         unchangedEntries: true,
         ledgerOutcome: "already_posted",
         entryCountBefore: 2,
@@ -625,7 +654,7 @@ describe("same-page experiment client", () => {
     for (const proof of [
       { paymentId: "p", capturedAmount: 50001, currency: "USD" },
       { paymentId: "p", capturedAmount: 50000, currency: "EUR" },
-    ])
+    ]) {
       expect(
         client.testAssessment(
           "temporary_failure",
@@ -633,6 +662,36 @@ describe("same-page experiment client", () => {
           { ...evidence, ledger: { ...evidence.ledger, proof } },
         ).tone,
       ).not.toBe("good");
+      expect(
+        client.paymentPresentation(
+          { status: "completed" },
+          { ...evidence, ledger: { ...evidence.ledger, proof } },
+          null,
+          "temporary_failure",
+        ).tone,
+      ).not.toBe("good");
+    }
+    expect(
+      client.paymentPresentation(
+        { status: "completed" },
+        evidence,
+        null,
+        "temporary_failure",
+      ).tone,
+    ).toBe("good");
+    const missingRecovery = client.paymentPresentation(
+      { status: "completed" },
+      {
+        ...evidence,
+        journal: { available: true, attempts: attempts.slice(0, 2) },
+      },
+      null,
+      "temporary_failure",
+    );
+    expect(missingRecovery.tone).toBe("warn");
+    expect(missingRecovery.verdict).toContain(
+      "recovery evidence is incomplete",
+    );
     expect(
       client.recoveredOperations(
         attempts.map((a) =>

@@ -42,6 +42,36 @@ started; Anthropic/admin/grant credentials and ambient endpoint overrides are
 not forwarded. Payment/workflow/database/journal behavior is real; no real
 money is moved. Only explicit local smoke mode enables the Inngest dev server.
 
+## Public experiment behavior
+
+The main route makes one $500 simulated payment, then requires a separate
+action to redeliver that same completed capture and posting ten times,
+sequentially. A positive result requires ten matching receipts, an unchanged
+payment identity and captured amount, and the same two original ledger entry
+IDs. The operation journal is diagnostic, not a delivery counter. Other
+scenarios and detailed evidence are disclosed separately.
+
+`Refresh evidence` only reads the current intent and evidence with GET. It
+does not repeat payment execution or a redelivery batch, and cannot recover
+receipts missing from a previous batch response. Each batch is attempted once
+per experiment in the browser. `Start a new experiment` clears the view; a new
+payment starts only after its explicit payment action.
+
+Redelivery has finite nested transport budgets: the mock-only gateway
+`POST /intents/:id/redeliver` allows 65 seconds; the agent batch allows
+55 seconds; each delivery allows 5 seconds; the durable-ledger resend signal
+allows 4.5 seconds and its pay-core HTTP request allows 3 seconds. Other
+gateway routes and live-mode timeouts are unchanged. An uncertain delivery
+stops the batch and leaves subsequent deliveries unattempted. These budgets
+allow slow successful calls without treating timeouts as evidence of failure
+or success; they are not a latency guarantee. The previous 800ms per-delivery
+budget was fragile, but no particular cloud failure is attributed to it
+without request-level evidence.
+
+Keep `auto_stop_machines = "off"` and `min_machines_running = 1` for the
+published portfolio demo. This avoids VM wake-up latency and incurs continuous
+runtime charges; the supplied Fly template preserves that existing policy.
+
 ## Prepare resources and deploy (operator action)
 
 1. Provision a Neon database near the Fly region. Use a TLS connection string

@@ -192,6 +192,27 @@ afterEach(() => {
 });
 
 describe("experiment controller response ownership", () => {
+  it("requires an explicit reset after an unknown original submission", async () => {
+    const doc = testDocument();
+    const form = doc
+      .getElementById("experiment")
+      .querySelectorAll(".challenge-picker")[0]!;
+    form.querySelector("button").dataset.challenge = "duplicates";
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("Unknown submission outcome"));
+    mountExperiment(doc);
+    form.fire("submit");
+    await settle();
+    expect(form.querySelector("button").disabled).toBe(true);
+    expect(doc.getElementById("main-result").hidden).toBe(false);
+    form.fire("submit");
+    await settle();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    doc.getElementById("new-experiment-action").fire("click");
+    expect(form.querySelector("button").disabled).toBe(false);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
   it.each([
     { phase: "state", outcome: "failure" },
     { phase: "evidence", outcome: "failure" },
@@ -601,7 +622,7 @@ describe("experiment controller response ownership", () => {
     });
     mountExperiment(doc);
     forms[0]!.fire("submit");
-    expect(doc.getElementById("repeat-delivery-section").hidden).toBe(false);
+    expect(doc.getElementById("repeat-delivery-section").hidden).toBe(true);
     expect(doc.getElementById("batch-selection").textContent).toBe(
       "No batch attempted.",
     );
@@ -609,7 +630,7 @@ describe("experiment controller response ownership", () => {
     await settle();
     doc.getElementById("repeat-action").fire("click");
     await settle();
-    expect(doc.getElementById("repeat-delivery-section").hidden).toBe(false);
+    expect(doc.getElementById("repeat-delivery-section").hidden).toBe(true);
     expect(doc.getElementById("batch-selection").textContent).toContain(
       "Unknown",
     );
@@ -660,7 +681,7 @@ describe("experiment controller response ownership", () => {
     await settle();
     expect(repeats).toBe(0);
     expect(doc.getElementById("repeat-action").disabled).toBe(true);
-    expect(doc.getElementById("recovery-action").hidden).toBe(true);
+    expect(doc.getElementById("recovery-action").hidden).toBe(false);
     doc.getElementById("repeat-action").fire("click");
     expect(repeats).toBe(0);
     proofAvailable = true;
@@ -677,6 +698,10 @@ describe("experiment controller response ownership", () => {
       paymentId: "payment-baseline",
     });
     expect(doc.getElementById("actual-amount").textContent).toBe("Unknown");
+    expect(doc.getElementById("duplicate-proof").hidden).toBe(false);
+    expect(doc.getElementById("before-repeats").textContent).toContain(
+      "Baseline before repeats: 500.00 USD",
+    );
     delivery.reject(new Error("network outcome unknown"));
     await settle();
     expect(doc.getElementById("baseline-raw").textContent).toBe(before);
@@ -720,6 +745,15 @@ describe("experiment controller response ownership", () => {
     expect(doc.getElementById("experiment-status").textContent).toBe(
       "Payment workflow is running",
     );
+    expect(doc.getElementById("lab-verdict").textContent).toBe(
+      "Waiting for the simulated payment to finish.",
+    );
+    expect(doc.getElementById("lab-verdict-panel").className).not.toContain(
+      "warn",
+    );
+    expect(doc.getElementById("recovery-help").textContent).not.toContain(
+      "delivery receipts",
+    );
     await vi.advanceTimersByTimeAsync(1500);
     await settle();
     expect(doc.getElementById("experiment-status").textContent).toBe(
@@ -728,6 +762,91 @@ describe("experiment controller response ownership", () => {
     expect(doc.getElementById("repeat-action").disabled).toBe(false);
     expect(repeats).toBe(0);
     expect(cacheModes.every((mode) => mode === "no-store")).toBe(true);
+  });
+  it("keeps partial replay refresh read-only and resets without submitting another experiment", async () => {
+    const doc = testDocument(),
+      form = new TestElement("form");
+    form.querySelector("button").dataset.challenge = "duplicates";
+    doc.getElementById("experiment").selectors.set(".challenge-picker", [form]);
+    const requests: { path: string; method: string }[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, options) => {
+      if (typeof input !== "string") throw new Error("Expected string path");
+      const path = input;
+      requests.push({ path, method: options?.method ?? "GET" });
+      if (path === "/ui/challenges")
+        return Promise.resolve(json({ intent: { id: "partial" } }));
+      if (path.endsWith("/redeliver"))
+        return Promise.resolve(
+          json({
+            invariantVerified: false,
+            attempted: 1,
+            receipts: Array.from({ length: 10 }, (_, index) => ({
+              delivery: index + 1,
+              status: index === 0 ? "unknown" : "not_attempted",
+              result: null,
+              reason:
+                index === 0 ? "delivery_outcome_unknown" : "batch_stopped",
+            })),
+          }),
+        );
+      return Promise.resolve(
+        json(
+          path.endsWith("/evidence")
+            ? completeEvidence("partial")
+            : state("partial", "completed"),
+        ),
+      );
+    });
+    mountExperiment(doc);
+    expect(doc.getElementById("main-result").hidden).toBe(true);
+    expect(doc.getElementById("evidence-details").hidden).toBe(true);
+    form.fire("submit");
+    await settle();
+    expect(form.querySelector("button").disabled).toBe(true);
+    const afterOriginal = requests.length;
+    form.fire("submit");
+    await settle();
+    expect(requests).toHaveLength(afterOriginal);
+    doc.getElementById("repeat-action").fire("click");
+    await settle();
+    expect(doc.getElementById("lab-verdict").textContent).toBe(
+      "Repeat verification is incomplete.",
+    );
+    expect(doc.getElementById("batch-status").textContent).toContain(
+      "1 repeat deliveries attempted; 0 fulfilled",
+    );
+    expect(doc.getElementById("batch-status").textContent).toContain(
+      "1 unknown; 0 failed; 9 not attempted",
+    );
+    expect(doc.getElementById("recovery-action").hidden).toBe(false);
+    expect(doc.getElementById("repeat-delivery-section").hidden).toBe(false);
+    expect(doc.getElementById("repeat-action").disabled).toBe(true);
+    const originalPosts = requests.filter(
+      (request) => request.method === "POST",
+    ).length;
+    expect(doc.getElementById("recovery-help").textContent).toContain(
+      "Missing delivery receipts cannot be recovered",
+    );
+    const beforeRead = requests.length;
+    doc.getElementById("recovery-action").fire("click");
+    await settle();
+    expect(
+      requests.slice(beforeRead).every((request) => request.method === "GET"),
+    ).toBe(true);
+    expect(doc.getElementById("lab-verdict").textContent).toBe(
+      "Repeat verification is incomplete.",
+    );
+    const beforeReset = requests.length;
+    doc.getElementById("new-experiment-action").fire("click");
+    await settle();
+    expect(requests).toHaveLength(beforeReset);
+    expect(
+      requests.filter((request) => request.method === "POST"),
+    ).toHaveLength(originalPosts);
+    expect(doc.getElementById("main-result").hidden).toBe(true);
+    expect(doc.getElementById("evidence-details").hidden).toBe(true);
+    expect(form.querySelector("button").disabled).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("treats actual null evidence before execution as complete and stops reading without inventing rows", async () => {
@@ -827,14 +946,14 @@ describe("experiment controller response ownership", () => {
     mountExperiment(doc);
     startChallenge(doc);
     await settle();
-    expect(doc.getElementById("recovery-action").hidden).toBe(true);
+    expect(doc.getElementById("recovery-action").hidden).toBe(false);
     expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(60 * 1500);
     await settle();
     expect(vi.getTimerCount()).toBe(0);
     expect(doc.getElementById("recovery-action").hidden).toBe(false);
     expect(doc.getElementById("recovery-action").textContent).toBe(
-      "Retry loading evidence",
+      "Refresh evidence",
     );
     expect(doc.getElementById("read-status").textContent).toContain("paused");
     expect(gets).toBe(122);
@@ -843,7 +962,10 @@ describe("experiment controller response ownership", () => {
     await settle();
     expect(posts).toBe(1);
     expect(gets).toBe(124);
-    expect(doc.getElementById("recovery-action").hidden).toBe(true);
+    expect(doc.getElementById("recovery-action").hidden).toBe(false);
+    expect(doc.getElementById("lab-verdict").textContent).toContain(
+      "recovery evidence is incomplete",
+    );
     expect(vi.getTimerCount()).toBe(0);
   });
   it("keeps reading a failed terminal payment until its actual snapshot arrives, without waiting for journal completeness", async () => {
@@ -948,7 +1070,9 @@ describe("experiment controller response ownership", () => {
     startChallenge(doc);
     await settle();
     expect(doc.getElementById("recovery-action").hidden).toBe(false);
-    expect(doc.getElementById("recovery-action").textContent).toBe("Reconnect");
+    expect(doc.getElementById("recovery-action").textContent).toBe(
+      "Refresh evidence",
+    );
     expect(doc.getElementById("read-status").textContent).toContain(
       "network offline",
     );
@@ -957,7 +1081,7 @@ describe("experiment controller response ownership", () => {
     doc.getElementById("recovery-action").fire("click");
     await settle();
     expect(posts).toBe(1);
-    expect(doc.getElementById("recovery-action").hidden).toBe(true);
+    expect(doc.getElementById("recovery-action").hidden).toBe(false);
     expect(doc.getElementById("experiment-error").hidden).toBe(true);
   });
 });

@@ -60,9 +60,52 @@ describe("ten sequential exact deliveries", () => {
       { timeoutMs: number; signal: AbortSignal },
     ][]) {
       expect(event).toBe("event");
-      expect(options.timeoutMs).toBeLessThanOrEqual(800);
+      expect(options.timeoutMs).toBeLessThanOrEqual(5_000);
       expect(options.signal.aborted).toBe(false);
     }
+  });
+  it("completes ten sequential deliveries slower than the old 800ms limit", async () => {
+    vi.useFakeTimers();
+    const resend = vi
+      .fn()
+      .mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve(result), 900)),
+      );
+    const core = Object.assign(new FakeAgentCoreClient(), {
+      resendExecution: resend,
+    });
+    const pending = new InspectIntentExecution(
+      { execute: vi.fn().mockResolvedValue(view) },
+      core,
+      true,
+    ).redeliver("intent", "owner");
+    await vi.advanceTimersByTimeAsync(9_001);
+    const batch = await pending;
+    expect(batch.invariantVerified).toBe(true);
+    expect(batch.receipts).toHaveLength(10);
+    expect(
+      batch.receipts.every((receipt) => receipt.status === "fulfilled"),
+    ).toBe(true);
+    expect(resend).toHaveBeenCalledTimes(10);
+  });
+  it("caps oversized test overrides at the finite production delivery budget", async () => {
+    vi.useFakeTimers();
+    const resend = vi.fn().mockImplementation(() => new Promise(() => {}));
+    const core = Object.assign(new FakeAgentCoreClient(), {
+      resendExecution: resend,
+    });
+    const pending = new InspectIntentExecution(
+      { execute: vi.fn().mockResolvedValue(view) },
+      core,
+      true,
+      { deadlineMs: 100_000, perCallMs: 100_000 },
+    ).redeliver("intent", "owner");
+    await vi.advanceTimersByTimeAsync(5_001);
+    expect((await pending).receipts[0]?.status).toBe("unknown");
+    expect(resend).toHaveBeenCalledTimes(1);
+    expect((resend.mock.calls[0]?.[1] as { timeoutMs: number }).timeoutMs).toBe(
+      5_000,
+    );
   });
   it("does not touch another customer's workflow", async () => {
     const resend = vi.fn();

@@ -287,13 +287,13 @@ function capturedEvidence(evidence) {
     proof.capturedAmount !== snapshot.capturedAmount ||
     entries.length !== 2 ||
     new Set(entries.map((entry) => entry.id)).size !== 2 ||
-    !summarizeLedger(entries).balanced ||
     !entries.every(
       (entry) =>
         entry.paymentId === snapshot.id &&
-        entry.amount.currency === snapshot.currency &&
-        entry.amount.amount === snapshot.capturedAmount,
-    )
+        entry.amount?.currency === snapshot.currency &&
+        entry.amount?.amount === snapshot.capturedAmount,
+    ) ||
+    !summarizeLedger(entries).balanced
   )
     return null;
   return { snapshot, entries };
@@ -424,6 +424,7 @@ export function paymentPresentation(
   const receiptProof = evidence?.ledger?.proof;
   const entryIds = (evidence?.ledger?.entries || []).map((e) => e.id).sort();
   const verifiedBatch =
+    capturedEvidence(evidence) !== null &&
     baseline &&
     baseline.intentId === intent?.id &&
     baseline.paymentId === snapshot?.id &&
@@ -445,6 +446,9 @@ export function paymentPresentation(
         r.result?.unchangedEntries === true &&
         r.result?.ledgerOutcome === "already_posted" &&
         r.result?.capture?.id === snapshot.id &&
+        r.result?.capture?.status === "captured" &&
+        r.result?.capture?.currency === snapshot.currency &&
+        r.result?.capture?.capturedAmount === snapshot.capturedAmount &&
         r.result?.entryCountBefore === 2 &&
         r.result?.entryCountAfter === 2 &&
         JSON.stringify([...(r.result?.originalEntryIds || [])].sort()) ===
@@ -533,16 +537,28 @@ export function paymentPresentation(
           : challenge === "inflated_amount"
             ? `The source request is $500.00. The assistant proposed ${formatMoney(intent.proposal?.amount, intent.proposal?.currency)}. The actual policy rejected it.`
             : "The assistant proposal failed the actual policy check. Inspect the recorded source and policy verdict.",
-      tone: "bad",
+      tone:
+        testAssessment(challenge, intent, evidence).tone === "good"
+          ? "good"
+          : "bad",
     };
   if (snapshot?.status === "failed")
     return {
       paid,
-      state: "Payment refused · $0 captured",
-      verdict: "Authorization was declined.",
+      state:
+        snapshot.capturedAmount === 0
+          ? "Payment refused · $0 captured"
+          : `Failed payment record · ${paid} captured`,
+      verdict:
+        testAssessment(challenge, intent, evidence).tone === "good"
+          ? "Payment declined. Zero captured, as expected."
+          : "The payment service reports a failed payment.",
       detail:
         "Pay-core reports a failed payment record and the captured amount shown above. Inspect the returned call and workflow state.",
-      tone: "bad",
+      tone:
+        testAssessment(challenge, intent, evidence).tone === "good"
+          ? "good"
+          : "warn",
     };
   if (challenge === "duplicates" && intent.status === "completed")
     return {
@@ -557,29 +573,37 @@ export function paymentPresentation(
           ? "Payment made once. Now try the repeat test."
           : "Payment completed; checking the baseline."
         : verifiedBatch
-          ? "Ten retries. Still one payment."
-          : "Repeat result is not yet verified.",
+          ? `Ten repeats verified. Total captured: ${paid}.`
+          : "Repeat verification is incomplete.",
       detail: !batch
         ? "No repeat requests have been sent. The second button deliberately retries the same completed payment; it does not create ten new payments."
         : verifiedBatch
           ? "The amount paid, payment identity, and two ledger entry IDs match the recorded baseline before the ten repeats."
-          : "The original baseline is kept below. Missing or unknown current evidence cannot prove an unchanged result.",
+          : "The original payment baseline is retained below. The returned evidence does not confirm all ten repeats; unchanged money alone cannot verify the test.",
       tone:
         verifiedBatch || (!batch && duplicateBaseline(intent, evidence))
           ? "good"
           : "warn",
     };
-  if (intent.status === "completed" && snapshot && evidence?.ledger?.proof)
+  if (intent.status === "completed" && capturedEvidence(evidence) !== null)
     return {
       paid,
       state:
         snapshot.status === "captured"
           ? "Paid · confirmed by the payment service"
           : `${snapshot.status} payment record`,
-      verdict: "Payment completed and recorded.",
+      verdict:
+        challenge === "temporary_failure"
+          ? testAssessment(challenge, intent, evidence).label
+          : "Payment completed and recorded.",
       detail:
-        "The captured amount comes from pay-core; the balanced entries come from the ledger. Recorded failed calls followed by returned calls show recovery.",
-      tone: "good",
+        challenge === "temporary_failure"
+          ? testAssessment(challenge, intent, evidence).detail
+          : "The payment snapshot and the two ledger entries agree on the captured amount and payment identity.",
+      tone:
+        challenge === "temporary_failure"
+          ? testAssessment(challenge, intent, evidence).tone
+          : "good",
     };
   return {
     paid,
@@ -590,11 +614,13 @@ export function paymentPresentation(
       : "Waiting for the payment service to confirm the outcome.",
     verdict:
       intent.status === "executing"
-        ? "The backend is executing the request."
+        ? "Waiting for the simulated payment to finish."
         : `Backend status: ${intent.status}`,
     detail:
-      "Waiting for authoritative payment and ledger evidence. Missing observations do not establish zero money moved.",
-    tone: "warn",
+      intent.status === "executing"
+        ? "The captured amount will appear after confirmation."
+        : "Waiting for authoritative payment and ledger evidence. Missing observations do not establish zero money moved.",
+    tone: intent.status === "executing" ? "" : "warn",
   };
 }
 
@@ -724,9 +750,28 @@ export function mountExperiment(doc = globalThis.document) {
   }
   function renderLab() {
     const paused = polls >= 60 && needsAutomaticRead(intent, evidence);
-    show(
-      "recovery-action",
-      Boolean(intent) && (hasError || paused || recoveryPending),
+    show("main-result", Boolean(intent) || busy || hasError);
+    show("evidence-details", Boolean(intent));
+    const canRead =
+      Boolean(intent) &&
+      Boolean(
+        hasError ||
+        paused ||
+        recoveryPending ||
+        batchStarted ||
+        needsAutomaticRead(intent, evidence) ||
+        (challenge === "temporary_failure" &&
+          intent?.status === "completed" &&
+          testAssessment(challenge, intent, evidence).tone !== "good"),
+      );
+    show("recovery-action", canRead);
+    show("recovery-help", canRead);
+    text(
+      "recovery-help",
+      "Reads the current state. Does not send another payment or repeat request." +
+        (batchStarted
+          ? " Missing delivery receipts cannot be recovered by refreshing."
+          : ""),
     );
     show(
       "read-status",
@@ -734,11 +779,7 @@ export function mountExperiment(doc = globalThis.document) {
     );
     text(
       "recovery-action",
-      recoveryPending
-        ? "Reconnecting…"
-        : hasError
-          ? "Reconnect"
-          : "Retry loading evidence",
+      recoveryPending ? "Refreshing evidence…" : "Refresh evidence",
     );
     if (paused && !hasError && !recoveryPending)
       text(
@@ -755,10 +796,7 @@ export function mountExperiment(doc = globalThis.document) {
           ? "See recorded request"
           : "$500 / $600 USD",
     );
-    show(
-      "repeat-delivery-section",
-      challenge === "duplicates" || batch !== null,
-    );
+    show("repeat-delivery-section", Boolean(batch?.receipts?.length));
 
     text(
       "lab-source-text",
@@ -781,7 +819,19 @@ export function mountExperiment(doc = globalThis.document) {
       result.detail =
         "Waiting for the saved request and actual result. No outcome is known yet.";
     }
+    if (batchRunning) {
+      result.verdict = "Checking ten repeat deliveries…";
+      result.detail =
+        "The original payment is recorded below. Wait for the receipts before drawing a conclusion about the repeats.";
+      result.tone = "";
+    }
+    if (hasError || paused) result.tone = "warn";
     show("repeat-action-panel", challenge === "duplicates");
+    for (const form of root.querySelectorAll(".challenge-picker")) {
+      const button = form.querySelector("button");
+      if (button.dataset.challenge === "duplicates")
+        button.disabled = busy || intent !== null || challenge === "duplicates";
+    }
     el("repeat-action").disabled = busy || batchStarted || !validBaseline;
     text(
       "repeat-next",
@@ -795,13 +845,13 @@ export function mountExperiment(doc = globalThis.document) {
           ? "Step 1 is complete. Now deliberately retry this same payment ten times."
           : intent?.status === "rejected" && !intent.durableLedgerEventId
             ? "This test stopped before the original payment. The repeat step is unavailable; inspect the policy reason."
-            : "Step 1: wait for a confirmed payment and its two ledger entries. Essential payment evidence is read automatically; a recovery control appears if reading pauses.",
+            : "Waiting for the original payment and its records to be confirmed.",
     );
 
     text(
       "before-repeats",
       baseline
-        ? `Before retries: ${formatMoney(baseline.capturedAmount, baseline.currency)} paid. This historical snapshot is retained even if the latest read is unavailable.`
+        ? `Baseline before repeats: ${formatMoney(baseline.capturedAmount, baseline.currency)} captured; one payment and two ledger entries. This is the saved original result.`
         : "Before repeats: not recorded yet. The baseline is saved only when you press the second button.",
     );
     show(
@@ -813,7 +863,7 @@ export function mountExperiment(doc = globalThis.document) {
       "after-repeats",
       batch
         ? after
-          ? `After retries: ${formatMoney(after.snapshot.capturedAmount, after.snapshot.currency)} paid; ${after.entries.length} ledger entries.`
+          ? `Current: ${formatMoney(after.snapshot.capturedAmount, after.snapshot.currency)} captured; ${after.entries.length} ledger entries.`
           : "After retries: the latest payment or ledger evidence is unavailable."
         : "After retries: not tested yet.",
     );
@@ -849,7 +899,7 @@ export function mountExperiment(doc = globalThis.document) {
         : batch?.unknown
           ? "Batch response unavailable. Delivery outcomes are unknown."
           : receipts.length
-            ? `${receipts.filter((r) => r.status !== "not_attempted").length} repeat deliveries attempted; ${receipts.filter((r) => r.status === "fulfilled").length} fulfilled receipts returned.`
+            ? `${receipts.filter((r) => r.status !== "not_attempted").length} repeat deliveries attempted; ${receipts.filter((r) => r.status === "fulfilled").length} fulfilled receipts returned; ${receipts.filter((r) => r.status === "unknown").length} unknown; ${receipts.filter((r) => r.status === "failed").length} failed; ${receipts.filter((r) => r.status === "not_attempted").length} not attempted.`
             : "",
     );
     renderDeliveries(receipts);
@@ -1171,6 +1221,7 @@ export function mountExperiment(doc = globalThis.document) {
         batchRunning,
     );
     const entries = evidence?.ledger?.entries || [];
+    show("ledger-panel", entries.length > 0);
     const balance = summarizeLedger(entries);
     text("ledger-balance", balance.label);
     el("ledger-balance").className = balance.balanced ? "good" : "";
@@ -1207,6 +1258,7 @@ export function mountExperiment(doc = globalThis.document) {
         : "No entries",
     );
     const attempts = evidence?.journal?.attempts || [];
+    show("journal-panel", attempts.length > 0);
     text("attempt-count", evidence ? String(attempts.length) : "—");
     text(
       "journal-state",
@@ -1459,6 +1511,11 @@ export function mountExperiment(doc = globalThis.document) {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       if (busy || root.dataset.mode === "live") return;
+      if (
+        (intent || challenge === "duplicates") &&
+        form.querySelector("button").dataset.challenge === "duplicates"
+      )
+        return;
       challenge = form.querySelector("button").dataset.challenge;
       batch = null;
       batchStarted = false;
@@ -1504,6 +1561,38 @@ export function mountExperiment(doc = globalThis.document) {
       }
     }
   });
+  el("new-experiment-action").addEventListener("click", () => {
+    if (busy) return;
+    generation += 1;
+    refreshSerial += 1;
+    stopPolling();
+    intent = null;
+    evidence = null;
+    challenge = null;
+    batch = null;
+    baseline = null;
+    batchStarted = false;
+    batchRunning = false;
+    polls = 0;
+    hasError = false;
+    recoveryPending = false;
+    selectedAttemptId = null;
+    selectedDeliveryId = null;
+    show("experiment-error", false);
+    text("read-status", "");
+    text(
+      "client-message",
+      "Ready for a new experiment. No payment or repeat request has been sent.",
+    );
+    el("evidence-details").open = false;
+    for (const button of root.querySelectorAll("[data-challenge]"))
+      button.setAttribute("aria-pressed", "false");
+    render();
+    root
+      .querySelector('[data-challenge="duplicates"]')
+      ?.focus({ preventScroll: true });
+  });
+  render();
   return { refresh };
 }
 mountExperiment();

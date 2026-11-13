@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { serve } from "@hono/node-server";
 import type { Hono } from "hono";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createGatewayApp, type GatewayAppDeps } from "./gateway-app.js";
 import {
   InMemoryGrantStore,
@@ -962,6 +962,119 @@ async function startHungServer(): Promise<HungServer> {
 }
 
 describe("upstream timeouts", () => {
+  it("cancels a stalled redelivery response body and returns 504 after headers arrived", async () => {
+    const { app } = await setup({ redeliveryUpstreamTimeoutMs: 20 });
+    let canceled = false;
+    let downstreamSignal: AbortSignal | null | undefined;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((_input, options) => {
+        downstreamSignal = options?.signal;
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('{"receipts":'));
+              },
+              cancel() {
+                canceled = true;
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      });
+    try {
+      const response = await app.request("/api/intents/i/redeliver", {
+        method: "POST",
+      });
+      expect(response.status).toBe(504);
+      expect(await response.json()).toMatchObject({
+        error: { code: "upstream_timeout" },
+      });
+      expect(canceled).toBe(true);
+      expect(downstreamSignal?.aborted).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+  it("bounds chunked redelivery response bytes and cancels an oversized body", async () => {
+    const { app } = await setup();
+    let canceled = false;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(4_194_305));
+          },
+          cancel() {
+            canceled = true;
+          },
+        }),
+      ),
+    );
+    try {
+      expect(
+        (await app.request("/api/intents/i/redeliver", { method: "POST" }))
+          .status,
+      ).toBe(502);
+      expect(canceled).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+  it("extends only the canonical mock POST redelivery timeout", async () => {
+    const { app, grantStore, now } = await setup({
+      defaultUpstreamTimeoutMs: 10,
+      redeliveryUpstreamTimeoutMs: 100,
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, options) =>
+        new Promise<Response>((resolve, reject) => {
+          const timer = setTimeout(
+            () =>
+              resolve(
+                new Response("{}", {
+                  headers: { "content-type": "application/json" },
+                }),
+              ),
+            30,
+          );
+          options?.signal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    );
+    try {
+      expect(
+        (await app.request("/api/intents/i/redeliver", { method: "POST" }))
+          .status,
+      ).toBe(200);
+      for (const [method, path] of [
+        ["GET", "/api/intents/i/redeliver"],
+        ["POST", "/api/intents/i/redeliver/extra"],
+        ["POST", "/api/intents/i/resend"],
+      ] as const) {
+        expect((await app.request(path, { method })).status).toBe(504);
+      }
+      const grant = await mintAndBindGrant(grantStore, now);
+      expect(
+        (
+          await app.request("/api/intents/i/redeliver", {
+            method: "POST",
+            headers: { cookie: grant.cookieHeader },
+          })
+        ).status,
+      ).toBe(504);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
   it.each(["", "?poll=1"])(
     "returns HTML 504 on GET /intents/:id when the upstream never responds%s",
     async (query) => {

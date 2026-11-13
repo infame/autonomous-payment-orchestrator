@@ -172,12 +172,50 @@ const STYLE = raw(`<style>
 @media(max-width:700px){#experiment .lab-scene{grid-template-columns:1fr;grid-template-areas:"source" "engine" "destination"}#experiment .lab-arrow:nth-child(4){display:none}#experiment .lab-heading{display:block}#experiment .invoice-fact{text-align:left;margin-top:16px}#experiment .log-workbench{grid-template-columns:1fr}#experiment .attempt-list,#experiment pre{max-height:300px}#experiment #selected-attempt{position:static;max-height:440px}#experiment .delivery-rows{grid-template-columns:1fr}#experiment .decision-panels{grid-template-columns:1fr;gap:0}}
 @media(max-width:560px){#experiment{padding:16px}#experiment .lab-heading{gap:12px}#experiment .lab-verdict{padding:16px}}
 
+.lab-page header,.lab-page main{max-width:1040px}
+.lab-page main{padding-top:20px}
+.lab-page .banner{padding:8px 0;background:transparent;margin-bottom:22px;font-size:.875rem;color:#475569}
+#experiment{padding:0;border-radius:0;background:transparent}
+#experiment .lab-heading{display:block;margin-bottom:28px}
+#experiment .lab-heading p{max-width:65ch}
+#experiment .main-steps{display:flex;flex-wrap:wrap;gap:24px 40px;align-items:start;margin:0 0 20px}
+#experiment .main-steps>form,#experiment .main-steps>section{flex:1 1 280px}
+#experiment .step-label,#experiment .main-action h2{font-size:1rem;font-weight:600;margin:0 0 10px;color:#17283b}
+#experiment .primary-challenge button{width:auto;background:#1d4ed8;border:0;color:#fff;font-size:1rem;text-align:center;padding:12px 18px}
+#experiment .primary-challenge button:disabled{background:#e2e8f0;color:#475569;opacity:1;border:1px solid #cbd5e1;cursor:default}
+#experiment .main-action{padding:0;border:0;background:transparent;border-radius:0;margin:0}
+#experiment .main-action p{font-size:.875rem;max-width:48ch;margin-bottom:12px}
+#experiment #client-message:empty{display:none}
+#experiment #client-message{font-size:.875rem;color:#475569;margin:0 0 20px}
+#experiment .lab-verdict{border-radius:8px;padding:20px}
+#experiment .lab-verdict h2{font-size:1.35rem;margin-bottom:8px}
+#experiment .result-payment{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;margin-top:18px;padding-top:12px;border-top:1px solid currentColor;font-size:.875rem}
+#experiment .result-payment strong{font-size:1.15rem;font-variant-numeric:tabular-nums}
+#experiment .result-payment p{flex-basis:100%}
+#experiment #duplicate-proof{border-top:0;padding:0;margin-top:20px}
+#experiment #duplicate-proof h3{font-size:1rem}
+#experiment #duplicate-proof p{margin:0 0 6px;font-size:.9rem}
+#experiment .result-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}
+#experiment #recovery-help{font-size:.875rem;margin:10px 0 0;max-width:70ch}
+#experiment .lab-attacks{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:16px}
+#experiment .lab-attacks button{border-radius:8px}
+#experiment .challenge-picker small{font-size:.875rem}
+#experiment .demo-limits{font-size:.875rem;color:#475569;margin:28px 0 0}
+#experiment .portfolio-links{display:flex;flex-wrap:wrap;gap:10px 24px;margin-top:20px;font-size:.9rem}
+#experiment .portfolio-links a{min-height:44px;display:inline-flex;align-items:center;text-underline-offset:3px}
+#experiment summary{min-height:44px;align-content:center}
+#experiment button:hover:not(:disabled){filter:brightness(.94)}
+#experiment .case-plan{border-left:0;border-top:1px solid #cbd5e1;background:transparent;padding:16px 0;margin:16px 0}
+#experiment ::selection{background:#bfdbfe;color:#0f172a}
+@media(max-width:700px){#experiment .main-steps{display:block}#experiment .main-action{margin-top:24px}#experiment .lab-attacks{grid-template-columns:1fr}#experiment .main-steps button,#experiment .result-actions button{width:100%}#experiment .result-actions{flex-direction:column}#experiment .lab-verdict{padding:16px}#experiment .lab-heading{margin-bottom:24px}#experiment h1{font-size:2rem}}
+
 </style>`);
 
 function modeBanner(mode: LlmMode, remainingCalls: number | null) {
   return mode === "mock"
     ? html`<div class="banner">
-        Simulation: mock reasoning. No real money moves.
+        Simulation: mock reasoning and a simulated payment provider. No real
+        money moves.
       </div>`
     : html`<div class="banner banner-live">
         Live mode — real
@@ -208,7 +246,7 @@ async function layout(
       <body class="${title === "Failure lab" ? "lab-page" : ""}">
         <header>
           <strong>APO / Failure lab</strong
-          ><span class="muted">Interactive portfolio demo</span>
+          ><a href="https://infame.dev/">Back to portfolio</a>
         </header>
         <main>${modeBanner(mode, remainingCalls)}${body}</main>
       </body>
@@ -263,271 +301,293 @@ Pay the vendor $1,200.00 for consulting.</textarea
     remainingCalls,
     html`<div id="experiment" data-mode="${mode}">
         <div class="lab-heading">
-          <div>
-            <h1>Try to make it pay twice.</h1>
-            <p>
-              Each button authorizes a new, isolated simulated payment. The
-              selected test shows its invoice amount. Introduce a failure, then
-              inspect what actually happened.
-            </p>
-          </div>
-          <div id="invoice-fact" class="invoice-fact">
-            <span id="source-invoice-label">Preset invoices</span
-            ><strong id="source-invoice-amount">$500 / $600 USD</strong>
-          </div>
-        </div>
-        <div class="lab-attacks">
-          ${LAB_CHALLENGES.map(
-            (c) =>
-              html`<form
-                class="challenge-picker"
-                method="post"
-                action="/ui/challenges"
-              >
-                <input type="hidden" name="scenario" value="${c.id}" /><button
-                  type="submit"
-                  data-challenge="${c.id}"
-                >
-                  <strong>${c.title}</strong><small>${c.detail}</small>
-                </button>
-              </form>`,
-          )}
-        </div>
-        <p id="client-message" role="status">
-          Choose a failure. No experiment has run yet.
-        </p>
-        <section
-          class="case-plan"
-          aria-label="Expected and observed experiment"
-        >
-          <h2 id="case-title">Choose an experiment</h2>
+          <h1>Try to make it pay twice.</h1>
           <p>
-            <strong>Expected:</strong>
-            <span id="case-expected"
-              >Each challenge shows the path it will test. Operation counts are
-              expectations, not results.</span
-            >
+            Make one simulated $500 payment, then retry that same payment ten
+            times. Compare the captured amount and payment records.
           </p>
+        </div>
+        <section class="main-steps" aria-label="Payment experiment">
+          <form
+            class="challenge-picker primary-challenge"
+            method="post"
+            action="/ui/challenges"
+          >
+            <input type="hidden" name="scenario" value="duplicates" />
+            <p class="step-label">1. Make the original payment</p>
+            <button type="submit" data-challenge="duplicates">
+              Make one $500 payment
+            </button>
+          </form>
+          <section id="repeat-action-panel" class="main-action" hidden>
+            <h2>2. Try the same payment again</h2>
+            <p id="repeat-next">
+              Wait for the original payment to be confirmed.
+            </p>
+            <button id="repeat-action" type="button" disabled>
+              Retry the same payment 10 times
+            </button>
+          </section>
         </section>
+        <p id="client-message" role="status">No experiment has run yet.</p>
         <div id="experiment-error" class="notice bad" role="alert" hidden></div>
         <section
-          class="lab-scene experiment-results"
-          aria-label="Actual payment result"
+          id="main-result"
+          class="experiment-results"
+          aria-label="Experiment result"
+          hidden
         >
-          <div class="lab-source">
-            <small>What arrived</small
-            ><strong id="lab-incoming">No request yet</strong>
-            <p id="lab-source-text">Pay the vendor $500.00 for the invoice.</p>
-            <div id="delivery-chips"></div>
-          </div>
-          <span class="lab-arrow" aria-hidden="true">→</span>
-          <div class="lab-engine">
-            <strong>APO</strong>
-            <p id="experiment-status">Ready for a challenge</p>
-            <small id="pending-label" hidden
-              >Waiting for backend confirmation</small
-            ><span id="status-indicator" class="status-indicator"></span>
-          </div>
-          <span class="lab-arrow" aria-hidden="true">→</span>
-          <div class="lab-destination">
-            <small>What actually happened</small
-            ><strong id="actual-amount">—</strong>
-            <p id="actual-state">No payment result yet</p>
-          </div>
-        </section>
-        <section id="lab-verdict-panel" class="lab-verdict" role="status">
-          <small>Actual payment result</small>
-          <h2 id="lab-verdict">Your challenge. The backend's answer.</h2>
-          <p id="lab-explanation">
-            Money stays unknown until pay-core returns a payment snapshot.
-          </p>
-          <p id="batch-status"></p>
-          <div id="test-assessment" hidden>
-            <small>Did the test behave as expected?</small>
-            <h3 id="test-assessment-label"></h3>
-            <p id="test-assessment-detail"></p>
-          </div>
-        </section>
-        <section id="repeat-action-panel" class="main-action" hidden>
-          <h3>Retry the same payment</h3>
-          <p id="repeat-next">First wait for the confirmed original payment.</p>
-          <button id="repeat-action" type="button" disabled>
-            Retry the same payment 10 times
-          </button>
-        </section>
-        <button id="recovery-action" type="button" class="secondary" hidden>
-          Reconnect
-        </button>
-        <p id="read-status" role="status" hidden></p>
-        <section class="panel">
-          <h3>Recorded operations <span id="attempt-count">0</span></h3>
-          <p id="journal-state" class="muted">
-            Payment-service calls and local ledger work. History may be
-            incomplete. Select a row for details.
-          </p>
-          <div class="log-filters">
-            <label
-              >Step<select id="log-step">
-                <option value="all">All steps</option>
-                <option value="authorize">Authorize</option>
-                <option value="capture">Capture</option>
-                <option value="post-ledger">Ledger posting</option>
-              </select></label
-            ><label
-              >Outcome<select id="log-outcome">
-                <option value="all">All outcomes</option>
-                <option value="succeeded">Returned</option>
-                <option value="failed">Operation error</option>
-                <option value="started">In progress / unknown</option>
-              </select></label
-            ><label
-              >Phase<select id="log-phase">
-                <option value="all">All phases</option>
-                <option value="workflow">Original workflow</option>
-                <option value="resend">Repeat requests</option>
-              </select></label
-            >
-          </div>
-
-          <p class="evidence-legend" aria-label="Evidence color legend">
-            <span class="operation-badge returned"
-              >Blue: returned or identifying fields</span
-            >
-            <span class="operation-badge">Amber: error or unknown</span>
-            <span class="evidence-value matching"
-              >Green: verified identity match</span
-            >
-          </p>
-          <div class="log-workbench">
-            <div>
-              <p id="log-summary" class="muted">
-                Showing 0 of 0 recorded operations
-              </p>
-              <button id="reset-log-filters" type="button" class="secondary">
-                Show all operations
-              </button>
-              <p id="log-empty">No recorded operations yet.</p>
-              <ol id="attempt-list" class="attempt-list"></ol>
+          <section id="lab-verdict-panel" class="lab-verdict" role="status">
+            <h2 id="lab-verdict">Waiting for a result</h2>
+            <p id="lab-explanation"></p>
+            <p id="batch-status"></p>
+            <div class="result-payment">
+              <span>Captured amount</span>
+              <strong id="actual-amount">Unknown</strong>
+              <p id="actual-state"></p>
             </div>
-            <section
-              id="selected-attempt"
-              tabindex="0"
-              aria-label="Selected operation"
-            >
-              <h4 id="operation-title">Select a recorded operation</h4>
-              <p id="operation-purpose">
-                Choose a row to see what it did and how it ended.
-              </p>
-              <p id="operation-outcome"></p>
-              <dl id="operation-fields" class="evidence-fields"></dl>
-              <h4>Current related evidence</h4>
-              <p>
-                This is the latest payment snapshot and ledger state, not the
-                historical response to this operation.
-              </p>
-              <dl id="operation-related" class="evidence-fields"></dl>
-              <details id="operation-raw-disclosure">
-                <summary>Complete recorded operation JSON</summary>
-                <pre id="operation-raw">No selection.</pre>
-              </details>
+            <p id="pending-label" hidden>Waiting for backend confirmation</p>
+          </section>
+          <section id="duplicate-proof" class="panel" hidden>
+            <h3>Before → after the ten retries</h3>
+            <p id="before-repeats"></p>
+            <p id="after-repeats"></p>
+            <p id="identity-comparison"></p>
+            <details>
+              <summary>Recorded baseline before retries</summary>
+              <pre id="baseline-raw">No baseline yet.</pre>
+            </details>
+          </section>
+          <div class="result-actions">
+            <button id="recovery-action" type="button" class="secondary" hidden>
+              Refresh evidence
+            </button>
+            <button id="new-experiment-action" type="button" class="secondary">
+              Start a new experiment
+            </button>
+          </div>
+          <p id="recovery-help" class="muted" hidden>
+            Reads the current state. Does not send another payment or repeat
+            request.
+          </p>
+          <p id="read-status" role="status" hidden></p>
+        </section>
+        <details id="other-tests" class="other-tests">
+          <summary>Other tests</summary>
+          <p>Each test starts a new, isolated simulation.</p>
+          <div class="lab-attacks">
+            ${LAB_CHALLENGES.filter((c) => c.id !== "duplicates").map(
+              (c) =>
+                html`<form
+                  class="challenge-picker"
+                  method="post"
+                  action="/ui/challenges"
+                >
+                  <input type="hidden" name="scenario" value="${c.id}" /><button
+                    type="submit"
+                    data-challenge="${c.id}"
+                  >
+                    <strong>${c.title}</strong><small>${c.detail}</small>
+                  </button>
+                </form>`,
+            )}
+          </div>
+        </details>
+        <details id="evidence-details" hidden>
+          <summary>Inspect payment and ledger evidence</summary>
+          <section
+            class="case-plan"
+            aria-label="Expected and observed experiment"
+          >
+            <h2 id="case-title">Experiment details</h2>
+            <p><strong>Expected:</strong> <span id="case-expected"></span></p>
+            <p id="invoice-fact" class="muted">
+              <span id="source-invoice-label">Source invoice</span>
+              <strong id="source-invoice-amount">$500 USD</strong>
+            </p>
+            <p>
+              <span id="lab-incoming"></span>:
+              <span id="lab-source-text"></span>
+            </p>
+            <p id="experiment-status"></p>
+            <span id="status-indicator" class="status-indicator" hidden></span>
+            <div id="delivery-chips"></div>
+            <div id="test-assessment" hidden>
+              <h3 id="test-assessment-label"></h3>
+              <p id="test-assessment-detail"></p>
+            </div>
+          </section>
+          <section id="journal-panel" class="panel">
+            <h3>Recorded operations <span id="attempt-count">0</span></h3>
+            <p id="journal-state" class="muted">
+              Payment-service calls and local ledger work. History may be
+              incomplete. Select a row for details.
+            </p>
+            <div class="log-filters">
+              <label
+                >Step<select id="log-step">
+                  <option value="all">All steps</option>
+                  <option value="authorize">Authorize</option>
+                  <option value="capture">Capture</option>
+                  <option value="post-ledger">Ledger posting</option>
+                </select></label
+              ><label
+                >Outcome<select id="log-outcome">
+                  <option value="all">All outcomes</option>
+                  <option value="succeeded">Returned</option>
+                  <option value="failed">Operation error</option>
+                  <option value="started">In progress / unknown</option>
+                </select></label
+              ><label
+                >Phase<select id="log-phase">
+                  <option value="all">All phases</option>
+                  <option value="workflow">Original workflow</option>
+                  <option value="resend">Repeat requests</option>
+                </select></label
+              >
+            </div>
+
+            <p class="evidence-legend" aria-label="Evidence color legend">
+              <span class="operation-badge returned"
+                >Blue: returned or identifying fields</span
+              >
+              <span class="operation-badge">Amber: error or unknown</span>
+              <span class="evidence-value matching"
+                >Green: verified identity match</span
+              >
+            </p>
+            <div class="log-workbench">
+              <div>
+                <p id="log-summary" class="muted">
+                  Showing 0 of 0 recorded operations
+                </p>
+                <button id="reset-log-filters" type="button" class="secondary">
+                  Show all operations
+                </button>
+                <p id="log-empty">No recorded operations yet.</p>
+                <ol id="attempt-list" class="attempt-list"></ol>
+              </div>
+              <section
+                id="selected-attempt"
+                tabindex="0"
+                aria-label="Selected operation"
+              >
+                <h4 id="operation-title">Select a recorded operation</h4>
+                <p id="operation-purpose">
+                  Choose a row to see what it did and how it ended.
+                </p>
+                <p id="operation-outcome"></p>
+                <dl id="operation-fields" class="evidence-fields"></dl>
+                <h4>Current related evidence</h4>
+                <p>
+                  This is the latest payment snapshot and ledger state, not the
+                  historical response to this operation.
+                </p>
+                <dl id="operation-related" class="evidence-fields"></dl>
+                <details id="operation-raw-disclosure">
+                  <summary>Complete recorded operation JSON</summary>
+                  <pre id="operation-raw">No selection.</pre>
+                </details>
+              </section>
+            </div>
+          </section>
+          <section id="repeat-delivery-section" class="panel" hidden>
+            <h3>Ten repeat deliveries, individually explained</h3>
+            <p id="receipt-provenance">
+              Each receipt below comes from the batch response for that
+              delivery. Journal rows are separate observations and cannot be
+              assigned to individual deliveries.
+            </p>
+            <ol id="delivery-rows" class="delivery-rows"></ol>
+            <p id="batch-selection" tabindex="-1">No batch attempted.</p>
+            <dl id="receipt-fields" class="evidence-fields"></dl>
+            <details id="receipt-raw-disclosure">
+              <summary>Complete selected delivery JSON</summary>
+              <pre id="batch-receipts" tabindex="-1">No batch attempted.</pre>
+            </details>
+          </section>
+          <div class="decision-panels">
+            <section class="panel">
+              <h3>
+                ${mode === "mock" ? "Simulated assistant proposal" : "Assistant proposal"}
+              </h3>
+              <p id="proposal-amount" class="amount">—</p>
+              <p id="proposal-description">No proposal yet.</p>
+              <div class="recorded-source">
+                <h4>Recorded source</h4>
+                <p id="recorded-source"></p>
+                <p id="recorded-answer"></p>
+              </div>
+            </section>
+            <section class="panel">
+              <h3>Policy decision</h3>
+              <p id="policy-decision" class="amount">—</p>
+              <p id="policy-explanation"></p>
             </section>
           </div>
-        </section>
-        <section id="duplicate-proof" class="panel" hidden>
-          <h3>Before → after the ten retries</h3>
-          <p id="before-repeats"></p>
-          <p id="after-repeats"></p>
-          <p id="identity-comparison"></p>
-          <details>
-            <summary>Recorded baseline before retries</summary>
-            <pre id="baseline-raw">No baseline yet.</pre>
-          </details>
-        </section>
-        <section id="repeat-delivery-section" class="panel" hidden>
-          <h3>Ten repeat deliveries, individually explained</h3>
-          <p id="receipt-provenance">
-            Each receipt below comes from the batch response for that delivery.
-            Journal rows are separate observations and cannot be assigned to
-            individual deliveries.
-          </p>
-          <ol id="delivery-rows" class="delivery-rows"></ol>
-          <p id="batch-selection" tabindex="-1">No batch attempted.</p>
-          <dl id="receipt-fields" class="evidence-fields"></dl>
-          <details id="receipt-raw-disclosure">
-            <summary>Complete selected delivery JSON</summary>
-            <pre id="batch-receipts" tabindex="-1">No batch attempted.</pre>
-          </details>
-        </section>
-        <div class="decision-panels">
-          <section class="panel">
-            <h3>
-              ${mode === "mock" ? "Simulated assistant proposal" : "Assistant proposal"}
-            </h3>
-            <p id="proposal-amount" class="amount">—</p>
-            <p id="proposal-description">No proposal yet.</p>
-            <div class="recorded-source">
-              <h4>Recorded source</h4>
-              <p id="recorded-source"></p>
-              <p id="recorded-answer"></p>
+          <section id="ledger-panel" class="panel">
+            <h3>One payment, two accounting sides</h3>
+            <p>
+              Debit and credit balance to net zero because they record opposite
+              accounting sides of one payment. Net zero does not mean nothing
+              was charged. The captured amount is shown separately above.
+            </p>
+            <strong id="ledger-balance">No evidence yet</strong>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th>Debit</th>
+                    <th>Credit</th>
+                  </tr>
+                </thead>
+                <tbody id="ledger-rows"></tbody>
+              </table>
+            </div>
+            <div>
+              <h4>Entry identities</h4>
+              <pre id="ledger-ids">No entries</pre>
             </div>
           </section>
-          <section class="panel">
-            <h3>Policy decision</h3>
-            <p id="policy-decision" class="amount">—</p>
-            <p id="policy-explanation"></p>
+          <section class="technical-notes">
+            <h4>Technical test plan and observed counts</h4>
+            <p id="case-mechanics"></p>
+            <p id="case-observed-technical"></p>
+            <p id="journal-provenance" class="muted"></p>
           </section>
-        </div>
-        <section class="panel">
-          <h3>One payment, two accounting sides</h3>
-          <p>
-            Debit and credit balance to net zero because they record opposite
-            accounting sides of one payment. Net zero does not mean nothing was
-            charged. The captured amount is shown separately above.
+          <details id="backend-state-disclosure">
+            <summary>Technical backend state and exact policy verdict</summary>
+            <p>
+              USD amounts are in cents: 50000 = $500.00. This explains units,
+              not a policy setting.
+            </p>
+            <pre id="backend-state-raw">No backend state yet.</pre>
+          </details>
+          <p id="request-reference" class="muted"></p>
+
+          <p class="lab-sources">
+            Captured amount: pay-core. Recorded entries: ledger. Workflow:
+            Inngest.
           </p>
-          <strong id="ledger-balance">No evidence yet</strong>
-          <div class="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Account</th>
-                  <th>Debit</th>
-                  <th>Credit</th>
-                </tr>
-              </thead>
-              <tbody id="ledger-rows"></tbody>
-            </table>
-          </div>
-          <div>
-            <h4>Entry identities</h4>
-            <pre id="ledger-ids">No entries</pre>
-          </div>
-        </section>
-        <section class="technical-notes">
-          <h4>Technical test plan and observed counts</h4>
-          <p id="case-mechanics"></p>
-          <p id="case-observed-technical"></p>
-          <p id="journal-provenance" class="muted"></p>
-        </section>
-        <details id="backend-state-disclosure">
-          <summary>Technical backend state and exact policy verdict</summary>
-          <p>
-            USD amounts are in cents: 50000 = $500.00. This explains units, not
-            a policy setting.
-          </p>
-          <pre id="backend-state-raw">No backend state yet.</pre>
         </details>
-        <p id="request-reference" class="muted"></p>
-
-        <p class="lab-sources">
-          Captured amount: pay-core. Recorded entries: ledger. Workflow:
-          Inngest.
+        <p class="demo-limits">
+          Ten sequential repeats against a simulated provider. This is not a
+          concurrent load test.
         </p>
-
+        <nav class="portfolio-links" aria-label="About this project">
+          <a href="https://infame.dev/projects/autonomous-payment-orchestrator"
+            >Read the case study</a
+          >
+          <a href="https://github.com/infame/autonomous-payment-orchestrator"
+            >View source</a
+          >
+          <a href="https://infame.dev/">Viacheslav Anosov · Portfolio</a>
+        </nav>
         <noscript
           ><p>
-            Initial challenge submissions open a standalone result without
-            JavaScript. The separate ten-retry test and live operation log
-            require JavaScript.
+            Initial payment submissions open a standalone result without
+            JavaScript. The separate ten-repeat test requires JavaScript.
           </p></noscript
         >
       </div>
