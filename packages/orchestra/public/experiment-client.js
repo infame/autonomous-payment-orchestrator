@@ -104,7 +104,7 @@ export function casePlanPresentation(challenge, intent, evidence, batch) {
           ? `${attempts.length} recorded operations: ${attempts.filter((a) => a.outcome === "succeeded").length} returned, ${attempts.filter((a) => a.outcome === "failed").length} errors, ${attempts.filter((a) => a.outcome === "started").length} outcomes not finalized.`
           : "Operation history is unavailable; the workflow and payment result remain independent.";
   if (batch?.receipts)
-    observed += ` Repeat-delivery receipts: ${batch.receipts.length}; ${batch.receipts.filter((r) => r.status !== "not_attempted").length} attempted, ${batch.receipts.filter((r) => r.status === "fulfilled").length} fulfilled, ${batch.receipts.filter((r) => r.status === "failed").length} failed, ${batch.receipts.filter((r) => r.status === "unknown").length} unknown, ${batch.receipts.filter((r) => r.status === "not_attempted").length} not attempted.`;
+    observed += ` Repeat-delivery receipts: ${batch.receipts.length}; ${batch.receipts.filter((r) => r.status !== "not_attempted").length} attempted, ${batch.receipts.filter((r) => r.status === "fulfilled").length} fulfilled, ${batch.receipts.filter((r) => r.status === "failed").length} failed, ${batch.receipts.filter((r) => r.status === "unknown").length} unknown, ${batch.receipts.filter((r) => r.status === "not_attempted").length} skipped`;
   else if (batch?.unknown)
     observed +=
       " Repeat-delivery response is unavailable; outcomes are unknown.";
@@ -565,7 +565,7 @@ export function paymentPresentation(
           : "warn",
       takeaway:
         testAssessment(challenge, intent, evidence).tone === "good"
-          ? "The simulated provider declined the payment, and its payment record confirms zero captured."
+          ? "The simulator declined the payment; its payment record confirms zero captured."
           : "A failed payment record does not establish the expected zero-capture result without matching evidence.",
     };
   if (challenge === "duplicates" && intent.status === "completed")
@@ -594,11 +594,11 @@ export function paymentPresentation(
           : "warn",
       takeaway: !batch
         ? duplicateBaseline(intent, evidence)
-          ? "One original payment and two ledger entries are confirmed. This is the baseline; repeats have not been tested yet."
+          ? "Original payment and two ledger entries confirmed: baseline; repeats have not been tested yet."
           : "The original payment baseline has not yet been verified."
         : verifiedBatch
-          ? "In this sequential simulator test, all ten repeats returned the same payment and the two original ledger entry IDs. No additional captured amount or ledger entries were observed."
-          : "The repeat test remains unverified. A saved $500 baseline alone cannot prove that the repeats preserved the payment and ledger entries.",
+          ? "In this sequential simulator test, ten retries kept the same payment and two original ledger entry IDs. No extra capture or entries were observed."
+          : "The repeat test remains unverified; the original baseline alone cannot prove unchanged payment and ledger IDs.",
     };
   if (intent.status === "completed" && capturedEvidence(evidence) !== null)
     return {
@@ -622,8 +622,8 @@ export function paymentPresentation(
       takeaway:
         challenge === "temporary_failure"
           ? testAssessment(challenge, intent, evidence).tone === "good"
-            ? "Authorization and capture each have a failed call followed by a returned call with the same run and operation key. The workflow recovered in this simulation."
-            : "The payment is recorded, but both planned failure-and-retry sequences have not been demonstrated."
+            ? "Authorization and capture each failed then returned with the same run and key. The workflow recovered in this simulation."
+            : "Payment recorded; both planned failure-and-retry sequences have not been demonstrated."
           : "The payment snapshot and the two ledger entries identify the same captured payment.",
     };
   return {
@@ -700,7 +700,6 @@ export function mountExperiment(doc = globalThis.document) {
     polls = 0,
     hasError = false,
     attemptsFingerprint = "",
-    focusBeforeAction = null,
     generation = 0,
     refreshSerial = 0,
     challenge = null,
@@ -714,6 +713,7 @@ export function mountExperiment(doc = globalThis.document) {
     recoveryPending = false,
     submission = null,
     latestReadState = "not_read",
+    hasObservedState = false,
     repeatRequestPath = null;
   function error(message) {
     hasError = true;
@@ -726,19 +726,17 @@ export function mountExperiment(doc = globalThis.document) {
     render();
   }
   function setBusy(value) {
-    if (value) focusBeforeAction = doc.activeElement;
     busy = value;
     for (const button of root.querySelectorAll("button")) {
       if (
         button.closest("#attempt-list") ||
-        button.classList.contains("delivery-chip")
+        button.classList.contains("delivery-chip") ||
+        button.dataset.utilityPanel
       )
         continue;
       button.disabled = value;
     }
     root.setAttribute("aria-busy", String(value));
-    if (!value && focusBeforeAction && !focusBeforeAction.closest("[hidden]"))
-      focusBeforeAction.focus({ preventScroll: true });
   }
   function fieldRows(id, fields) {
     el(id).replaceChildren(
@@ -774,7 +772,7 @@ export function mountExperiment(doc = globalThis.document) {
     detail.focus({ preventScroll: true });
   }
   function renderExchanges() {
-    show("creation-exchange", submission !== null);
+    show("creation-exchange", true);
     const requestMeanings = {
       duplicates: "Preset: create one simulated $500 payment instruction.",
       temporary_failure:
@@ -785,48 +783,67 @@ export function mountExperiment(doc = globalThis.document) {
         "Preset: start a $600 payment test with a permanent provider decline.",
     };
     const ack = submission?.ack;
-    text("create-request-meaning", requestMeanings[submission?.scenario] || "");
-    text("create-request-body", submission?.body || "");
+    text(
+      "create-request-meaning",
+      requestMeanings[submission?.scenario] ||
+        "Preset: one simulated $500 payment instruction.",
+    );
+    text("create-request-body", submission?.body || "scenario=duplicates");
     text(
       "create-response-summary",
       ack
-        ? "The server returned a request reference. The payment outcome is read separately."
+        ? "Request reference returned. Payment is read separately."
         : submission?.outcome === "unknown"
-          ? "No acknowledgement was received. The payment outcome is unknown; this request will not be sent again automatically."
-          : "Waiting for the server's acknowledgement. No payment outcome is confirmed yet.",
+          ? "No acknowledgement received; payment outcome unknown. No automatic resend."
+          : submission
+            ? "Waiting for acknowledgement; payment not confirmed."
+            : "Not sent yet.",
     );
     text(
       "create-response-reference",
-      ack ? `Request reference: ${ack.intent.id}` : "",
+      ack
+        ? ack.intent.id.length > 16
+          ? `Request reference (short): ${ack.intent.id.slice(0, 8)}…`
+          : `Request reference: ${ack.intent.id}`
+        : "",
     );
     show("create-response-reference", Boolean(ack));
     show("create-response-disclosure", Boolean(ack));
     text("create-response-raw", ack ? JSON.stringify(ack, null, 2) : "");
-    show("observed-state", Boolean(ack));
+    show("observed-state", true);
     text(
       "observed-read-path",
-      ack ? `GET /api/intents/${encodeURIComponent(ack.intent.id)}` : "",
+      ack
+        ? `GET /api/intents/${encodeURIComponent(ack.intent.id)} + /evidence`
+        : "GET /api/intents/:id + /evidence",
     );
-    const observed =
-      latestReadState === "available" || latestReadState === "state_available";
-    show("observed-state-fields", observed);
+    const observed = hasObservedState && latestReadState !== "unavailable";
+    show("observed-state-fields", true);
     show("decision-panels", observed);
     text(
       "observed-read-status",
-      latestReadState === "unavailable"
-        ? "The latest GET observation is unavailable. Earlier state is not shown as current."
-        : latestReadState === "available"
-          ? "Read after the POST acknowledgement. This can change as the workflow runs."
-          : latestReadState === "state_available"
-            ? "Request state loaded. Payment and ledger evidence is still being read."
-            : "Waiting for a fresh GET observation.",
+      hasError
+        ? "Request or observation not confirmed. Inspect evidence for details."
+        : latestReadState === "unavailable"
+          ? "Latest read unavailable. No current result is verified."
+          : latestReadState === "available"
+            ? "Latest confirmed observation."
+            : latestReadState === "state_available"
+              ? "Request loaded; reading payment and ledger evidence."
+              : latestReadState === "loading" && observed
+                ? "Refreshing; values below are the last confirmed observation."
+                : submission
+                  ? "Waiting for an observation; payment not confirmed."
+                  : "No request has been sent.",
     );
     const proposal = observed ? intent?.proposal : null;
     text(
       "observed-source",
       observed
         ? sourceDisplayText(intent?.text || "Not returned", challenge, "mock")
-        : "",
+        : latestReadState === "unavailable"
+          ? "Unavailable"
+          : "—",
     );
     text(
       "observed-proposal",
@@ -834,30 +851,48 @@ export function mountExperiment(doc = globalThis.document) {
         ? `${formatMoney(proposal.amount, proposal.currency)} to ${proposal.merchantId}.`
         : proposal?.question ||
             proposal?.reason ||
-            (observed ? "No proposal returned." : ""),
+            (observed
+              ? "No proposal returned."
+              : latestReadState === "unavailable"
+                ? "Unavailable"
+                : "—"),
     );
     const policy = observed
       ? policyPresentation(intent, challenge !== null)
       : null;
     text(
       "observed-policy",
-      policy ? `${policy.label}. ${policy.explanation}` : "",
+      policy
+        ? `${policy.label}. ${policy.label === "Simulation authorized" ? "Preset supplied the approval required by policy." : policy.explanation}`
+        : latestReadState === "unavailable"
+          ? "Unavailable"
+          : "—",
     );
-    show("repeat-exchange", batchStarted);
+    show("repeat-exchange", true);
     text(
       "repeat-request-path",
-      repeatRequestPath ? `POST ${repeatRequestPath}` : "",
+      repeatRequestPath
+        ? intent.id.length > 16
+          ? `POST ${repeatRequestPath.replace(encodeURIComponent(intent.id), intent.id.slice(0, 8) + "…")} (short ref)`
+          : `POST ${repeatRequestPath}`
+        : "POST /api/intents/:id/redeliver",
+    );
+    text(
+      "repeat-request-raw",
+      repeatRequestPath
+        ? `POST ${repeatRequestPath}\nBody: none`
+        : "No repeat request sent.",
     );
     const receipts = batch?.receipts || [];
     text(
       "repeat-response-summary",
       batchRunning && !batch
-        ? "Waiting for the batch response. The repeats are not verified yet."
+        ? "Waiting for receipts; repeats not verified."
         : batch?.unknown
-          ? "No batch response was received. Delivery outcomes are unknown."
+          ? "No receipt response; delivery outcomes unknown."
           : batch
-            ? `The server returned ${receipts.length} delivery receipts. Payment and ledger state is read separately below.`
-            : "",
+            ? `${receipts.length} delivery receipts returned.`
+            : "Not sent yet.",
     );
     show("repeat-response-disclosure", Array.isArray(batch?.receipts));
     const responseFields = Array.isArray(batch?.receipts)
@@ -896,8 +931,7 @@ export function mountExperiment(doc = globalThis.document) {
   function renderLab() {
     renderExchanges();
     const paused = polls >= 60 && needsAutomaticRead(intent, evidence);
-    show("main-result", Boolean(intent) || busy || hasError);
-    show("evidence-details", Boolean(intent));
+    show("main-result", true);
     const canRead =
       Boolean(intent) &&
       Boolean(
@@ -910,7 +944,9 @@ export function mountExperiment(doc = globalThis.document) {
           intent?.status === "completed" &&
           testAssessment(challenge, intent, evidence).tone !== "good"),
       );
-    show("recovery-action", canRead);
+    show("recovery-action", true);
+    el("recovery-action").disabled = busy || !canRead;
+    el("new-experiment-action").disabled = busy || submission === null;
     show("recovery-help", canRead);
     text(
       "recovery-help",
@@ -960,6 +996,8 @@ export function mountExperiment(doc = globalThis.document) {
       challenge,
       baseline,
     );
+    if (!intent && !submission && !busy && !hasError)
+      result.verdict = "Ready for the first payment.";
     if (!intent && busy) {
       result.verdict = "Starting the test…";
       result.detail =
@@ -971,7 +1009,7 @@ export function mountExperiment(doc = globalThis.document) {
         "The original payment is recorded below. Wait for the receipts before drawing a conclusion about the repeats.";
       result.tone = "";
       result.takeaway =
-        "The repeat test is still being checked. A complete response and matching payment and ledger evidence are required before drawing a conclusion.";
+        "The result is still being checked. Matching receipts and current payment and ledger evidence are needed.";
     }
     if (hasError || paused) result.tone = "warn";
     if (latestReadState === "unavailable") {
@@ -994,59 +1032,57 @@ export function mountExperiment(doc = globalThis.document) {
       result.takeaway =
         hasError || paused
           ? "The latest evidence is incomplete or unavailable. No current result is verified."
-          : "A fresh observation is still being read. It has not established a new verified result.";
+          : "Refreshing observations; no new result is verified yet.";
     }
     if (hasError && !intent) {
       result.verdict = "No payment outcome is confirmed.";
       result.detail =
         "No request acknowledgement was received. This request will not be repeated automatically.";
     }
-    show("repeat-action-panel", challenge === "duplicates");
+    show("repeat-action-panel", true);
     for (const form of root.querySelectorAll(".challenge-picker")) {
       const button = form.querySelector("button");
       if (button.dataset.challenge === "duplicates")
         button.disabled = busy || intent !== null || challenge === "duplicates";
     }
-    el("repeat-action").disabled = busy || batchStarted || !validBaseline;
+    el("repeat-action").disabled =
+      busy || challenge !== "duplicates" || batchStarted || !validBaseline;
     text(
       "repeat-next",
       batchStarted
         ? batchRunning
-          ? "Ten repeat requests are being sent. Wait for their actual receipts."
+          ? "Sending ten sequential retries."
           : batch?.unknown
-            ? "The repeat outcome is unknown. The batch will not be sent again; inspect the available evidence below."
-            : "The repeat batch has been attempted once. Inspect its receipts below."
+            ? "Outcome unknown · no automatic retry."
+            : "Attempted once; no automatic retry."
         : validBaseline
-          ? "Step 1 is complete. Now deliberately retry this same payment ten times."
+          ? "Original confirmed. Repeat capture and ledger posting."
           : intent?.status === "rejected" && !intent.durableLedgerEventId
-            ? "This test stopped before the original payment. The repeat step is unavailable; inspect the policy reason."
-            : "Waiting for the original payment and its records to be confirmed.",
+            ? "Original blocked; repeats unavailable."
+            : "Waiting for the original payment and records.",
     );
 
     text(
       "before-repeats",
       baseline
-        ? `Baseline before repeats: ${formatMoney(baseline.capturedAmount, baseline.currency)} captured; one payment and two ledger entries. This is the saved original result.`
-        : "Before repeats: not recorded yet. The baseline is saved only when you press the second button.",
+        ? `Baseline: ${formatMoney(baseline.capturedAmount, baseline.currency)} · 2 entries`
+        : "Baseline: not recorded",
     );
-    show(
-      "duplicate-proof",
-      challenge === "duplicates" && Boolean(baseline || batch),
-    );
+    show("duplicate-proof", true);
     const after = capturedEvidence(evidence);
     text(
       "after-repeats",
       batch
         ? after
-          ? `Current: ${formatMoney(after.snapshot.capturedAmount, after.snapshot.currency)} captured; ${after.entries.length} ledger entries.`
-          : "After retries: the latest payment or ledger evidence is unavailable."
-        : "After retries: not tested yet.",
+          ? `Latest: ${formatMoney(after.snapshot.capturedAmount, after.snapshot.currency)} · ${after.entries.length} entries`
+          : "Latest: unavailable"
+        : "After: not tested",
     );
     text(
       "identity-comparison",
       batch && result.tone === "good"
-        ? "Verified: the payment identity and both ledger entry IDs are unchanged across all ten receipts."
-        : "The before/after identity comparison is not yet verified.",
+        ? "10/10 receipts match the payment and both original ledger IDs."
+        : "Payment and ledger identity preservation is not verified.",
     );
     const assessment = testAssessment(challenge, intent, evidence);
     show("test-assessment", Boolean(challenge && challenge !== "duplicates"));
@@ -1087,7 +1123,7 @@ export function mountExperiment(doc = globalThis.document) {
       batch?.unknown
         ? "Batch response unavailable. Delivery outcomes are unknown."
         : receipts.length
-          ? `${receipts.filter((r) => r.status !== "not_attempted").length} repeat deliveries attempted; ${receipts.filter((r) => r.status === "fulfilled").length} fulfilled receipts returned; ${receipts.filter((r) => r.status === "unknown").length} unknown; ${receipts.filter((r) => r.status === "failed").length} failed; ${receipts.filter((r) => r.status === "not_attempted").length} not attempted.`
+          ? `${receipts.filter((r) => r.status !== "not_attempted").length} attempted · ${receipts.filter((r) => r.status === "fulfilled").length} fulfilled · ${receipts.filter((r) => r.status === "unknown").length} unknown · ${receipts.filter((r) => r.status === "failed").length} failed · ${receipts.filter((r) => r.status === "not_attempted").length} skipped`
           : batchRunning
             ? "Waiting for the repeat delivery receipts…"
             : "",
@@ -1561,11 +1597,13 @@ export function mountExperiment(doc = globalThis.document) {
     } catch (cause) {
       if (!current()) return false;
       latestReadState = "unavailable";
+      hasObservedState = false;
       evidence = null;
       render();
       throw cause;
     }
     intent = response.intent;
+    hasObservedState = true;
     latestReadState = "state_available";
     render();
     try {
@@ -1591,6 +1629,7 @@ export function mountExperiment(doc = globalThis.document) {
       if (!current()) return false;
       evidence = null;
       latestReadState = "unavailable";
+      hasObservedState = false;
       render();
       error(
         `Payment state loaded, but evidence is unavailable. ${cause.message}`,
@@ -1627,19 +1666,6 @@ export function mountExperiment(doc = globalThis.document) {
       }
     }, 1500);
   }
-  function revealResult() {
-    const view = doc.defaultView;
-    if (!view || view.innerWidth > 740) return;
-    const target = root.querySelector(".experiment-results");
-    const rect = target.getBoundingClientRect();
-    if (rect.top > view.innerHeight * 0.65 || rect.bottom < 0)
-      target.scrollIntoView({
-        block: "start",
-        behavior: view.matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "instant"
-          : "smooth",
-      });
-  }
   async function action(path, body) {
     if (busy) return;
     const requestBody = body ? new globalThis.URLSearchParams(body) : null;
@@ -1662,6 +1688,7 @@ export function mountExperiment(doc = globalThis.document) {
         outcome: "pending",
       };
       latestReadState = "not_read";
+      hasObservedState = false;
       repeatRequestPath = null;
       text("read-status", "");
       renderLab();
@@ -1702,7 +1729,6 @@ export function mountExperiment(doc = globalThis.document) {
       await refresh(epoch);
       if (epoch !== generation) return;
       schedule(epoch);
-      revealResult();
       text(
         "client-message",
         "Backend state updated. Review the result on this page.",
@@ -1728,6 +1754,16 @@ export function mountExperiment(doc = globalThis.document) {
       el(id).value = "all";
     render();
   });
+  for (const button of root.querySelectorAll("[data-utility-panel]")) {
+    button.addEventListener("click", () => {
+      const opening = button.getAttribute("aria-expanded") !== "true";
+      for (const control of root.querySelectorAll("[data-utility-panel]")) {
+        const open = control === button && opening;
+        control.setAttribute("aria-expanded", String(open));
+        show(control.dataset.utilityPanel, open);
+      }
+    });
+  }
   for (const form of root.querySelectorAll(".challenge-picker"))
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1799,6 +1835,7 @@ export function mountExperiment(doc = globalThis.document) {
     recoveryPending = false;
     submission = null;
     latestReadState = "not_read";
+    hasObservedState = false;
     repeatRequestPath = null;
     selectedAttemptId = null;
     selectedDeliveryId = null;
@@ -1808,7 +1845,10 @@ export function mountExperiment(doc = globalThis.document) {
       "client-message",
       "Ready for a new experiment. No payment or repeat request has been sent.",
     );
-    el("evidence-details").open = false;
+    for (const id of ["exchange-details", "evidence-details", "other-tests"])
+      show(id, false);
+    for (const control of root.querySelectorAll("[data-utility-panel]"))
+      control.setAttribute("aria-expanded", "false");
     for (const button of root.querySelectorAll("[data-challenge]"))
       button.setAttribute("aria-pressed", "false");
     render();

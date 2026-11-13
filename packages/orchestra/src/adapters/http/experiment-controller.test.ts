@@ -17,6 +17,7 @@ class TestElement {
   className = "";
   open = false;
   focused = false;
+  scrolls = 0;
   parentElement: TestElement | null = null;
   dataset: Record<string, string> = {};
   children: TestElement[] = [];
@@ -80,6 +81,12 @@ class TestElement {
   focus() {
     this.focused = true;
   }
+  getBoundingClientRect() {
+    return { top: 1000, bottom: 1200 };
+  }
+  scrollIntoView() {
+    this.scrolls += 1;
+  }
 }
 function testDocument() {
   const nodes = new Map<string, TestElement>();
@@ -89,6 +96,8 @@ function testDocument() {
   };
   getElementById("experiment").dataset.mode = "mock";
   getElementById("experiment-error").hidden = true;
+  for (const id of ["exchange-details", "evidence-details", "other-tests"])
+    getElementById(id).hidden = true;
   const defaultForm = new TestElement("form");
   defaultForm.querySelector("button").dataset.challenge = "temporary_failure";
   getElementById("experiment").selectors.set(".challenge-picker", [
@@ -97,11 +106,13 @@ function testDocument() {
   return {
     getElementById,
     createElement: (tag: string) => new TestElement(tag),
-    activeElement: null,
+    activeElement: null as TestElement | null,
     defaultView: null,
   };
 }
-function startChallenge(doc: ReturnType<typeof testDocument>) {
+function startChallenge(
+  doc: Pick<ReturnType<typeof testDocument>, "getElementById">,
+) {
   doc
     .getElementById("experiment")
     .querySelectorAll(".challenge-picker")[0]!
@@ -213,6 +224,116 @@ afterEach(() => {
 });
 
 describe("experiment controller response ownership", () => {
+  it("keeps workspace slots and previous observations while refreshing without scrolling or stealing focus", async () => {
+    const base = testDocument();
+    const doc = {
+      ...base,
+      defaultView: {
+        innerWidth: 375,
+        innerHeight: 650,
+        matchMedia: () => ({ matches: true }),
+      },
+    };
+    const originalFocus = new TestElement("button"),
+      nextFocus = new TestElement("button");
+    doc.activeElement = originalFocus;
+    const post = deferred<Response>(),
+      nextRead = deferred<Response>();
+    let stateReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      if (input === "/ui/challenges") return post.promise;
+      if (input === "/api/intents/stable")
+        return ++stateReads === 1
+          ? Promise.resolve(json(state("stable", "completed")))
+          : nextRead.promise;
+      return Promise.resolve(json(completeEvidence("stable")));
+    });
+    const controller = mountExperiment(doc);
+    const result = doc
+      .getElementById("experiment")
+      .querySelector(".experiment-results");
+    expect(doc.getElementById("lab-verdict").textContent).toBe(
+      "Ready for the first payment.",
+    );
+    for (const id of [
+      "creation-exchange",
+      "repeat-action-panel",
+      "repeat-exchange",
+      "main-result",
+      "observed-state-fields",
+    ])
+      expect(doc.getElementById(id).hidden).toBe(false);
+    startChallenge(doc);
+    doc.activeElement = nextFocus;
+    post.resolve(json({ intent: { id: "stable" } }));
+    await settle();
+    expect(originalFocus.focused).toBe(false);
+    expect(nextFocus.focused).toBe(false);
+    expect(result.scrolls).toBe(0);
+    const previous = doc.getElementById("observed-source").textContent;
+    const reading = controller.refresh();
+    expect(doc.getElementById("observed-source").textContent).toBe(previous);
+    expect(doc.getElementById("observed-read-status").textContent).toContain(
+      "last confirmed observation",
+    );
+    expect(doc.getElementById("observed-state-fields").hidden).toBe(false);
+    nextRead.reject(new Error("Read unavailable"));
+    await expect(reading).rejects.toThrow("Read unavailable");
+    expect(doc.getElementById("observed-source").textContent).toBe(
+      "Unavailable",
+    );
+    expect(doc.getElementById("observed-state-fields").hidden).toBe(false);
+    expect(doc.getElementById("actual-amount").textContent).toBe("Unknown");
+    expect(doc.getElementById("demonstration-meaning").textContent).toContain(
+      "No current result is verified",
+    );
+    expect(originalFocus.focused).toBe(false);
+    expect(result.scrolls).toBe(0);
+  });
+  it("opens utility panels locally and closes them on explicit reset without submitting", async () => {
+    const doc = testDocument(),
+      rawButton = new TestElement("button"),
+      evidenceButton = new TestElement("button");
+    rawButton.dataset.utilityPanel = "exchange-details";
+    evidenceButton.dataset.utilityPanel = "evidence-details";
+    doc
+      .getElementById("experiment")
+      .selectors.set("[data-utility-panel]", [rawButton, evidenceButton]);
+    const request = vi.spyOn(globalThis, "fetch");
+    mountExperiment(doc);
+    rawButton.fire("click");
+    expect(rawButton.getAttribute("aria-expanded")).toBe("true");
+    expect(doc.getElementById("exchange-details").hidden).toBe(false);
+    evidenceButton.fire("click");
+    expect(rawButton.getAttribute("aria-expanded")).toBe("false");
+    expect(evidenceButton.getAttribute("aria-expanded")).toBe("true");
+    expect(doc.getElementById("exchange-details").hidden).toBe(true);
+    expect(doc.getElementById("evidence-details").hidden).toBe(false);
+    expect(doc.getElementById("main-result").hidden).toBe(false);
+    expect(request).not.toHaveBeenCalled();
+    request.mockImplementation((input) =>
+      Promise.resolve(
+        json(
+          input === "/ui/challenges"
+            ? { intent: { id: "utility" } }
+            : typeof input === "string" && input.endsWith("/evidence")
+              ? completeEvidence("utility")
+              : state("utility", "completed"),
+        ),
+      ),
+    );
+    startChallenge(doc);
+    await settle();
+    const beforeReset = request.mock.calls.length;
+    doc.getElementById("new-experiment-action").fire("click");
+    expect(doc.getElementById("exchange-details").hidden).toBe(true);
+    expect(doc.getElementById("evidence-details").hidden).toBe(true);
+    expect(doc.getElementById("other-tests").hidden).toBe(true);
+    expect(rawButton.getAttribute("aria-expanded")).toBe("false");
+    expect(evidenceButton.getAttribute("aria-expanded")).toBe("false");
+    expect(request.mock.calls).toHaveLength(beforeReset);
+    expect(doc.getElementById("main-result").hidden).toBe(false);
+  });
   it("keeps the actual id-only POST acknowledgement separate from later GET observations", async () => {
     const doc = testDocument();
     const form = doc
@@ -256,16 +377,16 @@ describe("experiment controller response ownership", () => {
       throw new Error("Unexpected request");
     });
     const controller = mountExperiment(doc);
-    expect(doc.getElementById("creation-exchange").hidden).toBe(true);
+    expect(doc.getElementById("creation-exchange").hidden).toBe(false);
     form.fire("submit");
     expect(postedBody).toBe("scenario=duplicates");
     expect(doc.getElementById("create-request-body").textContent).toBe(
       postedBody,
     );
     expect(doc.getElementById("create-response-summary").textContent).toContain(
-      "Waiting for the server's acknowledgement",
+      "Waiting for acknowledgement",
     );
-    expect(doc.getElementById("observed-state").hidden).toBe(true);
+    expect(doc.getElementById("observed-state").hidden).toBe(false);
     post.resolve(
       json({
         intent: { id: "request-one" },
@@ -277,9 +398,9 @@ describe("experiment controller response ownership", () => {
     expect(JSON.parse(ack)).toEqual({ intent: { id: "request-one" } });
     expect(ack).not.toContain("credentials");
     expect(doc.getElementById("create-response-summary").textContent).toContain(
-      "payment outcome is read separately",
+      "Payment is read separately",
     );
-    expect(doc.getElementById("observed-state-fields").hidden).toBe(true);
+    expect(doc.getElementById("observed-state-fields").hidden).toBe(false);
     firstGet.resolve(json({ intent: observed }));
     await settle();
     expect(doc.getElementById("observed-source").textContent).toBe(
@@ -348,13 +469,13 @@ describe("experiment controller response ownership", () => {
     expect(parsedBatch.receipts).toHaveLength(10);
     expect(batch).not.toContain("credentials");
     expect(doc.getElementById("repeat-response-summary").textContent).toContain(
-      "returned 10 delivery receipts",
+      "10 delivery receipts returned",
     );
     expect(doc.getElementById("repeat-request-path").textContent).toBe(
       "POST /api/intents/trace/redeliver",
     );
     expect(doc.getElementById("actual-amount").textContent).toBe("Unknown");
-    expect(doc.getElementById("observed-state-fields").hidden).toBe(true);
+    expect(doc.getElementById("observed-state-fields").hidden).toBe(false);
     expect(doc.getElementById("backend-state-raw").textContent).toContain(
       "Earlier raw state is not shown as current",
     );
@@ -394,17 +515,17 @@ describe("experiment controller response ownership", () => {
     expect(form.querySelector("button").disabled).toBe(true);
     expect(doc.getElementById("main-result").hidden).toBe(false);
     expect(doc.getElementById("create-response-summary").textContent).toContain(
-      "No acknowledgement was received",
+      "No acknowledgement received",
     );
     expect(doc.getElementById("create-response-raw").textContent).toBe("");
-    expect(doc.getElementById("observed-state").hidden).toBe(true);
+    expect(doc.getElementById("observed-state").hidden).toBe(false);
     form.fire("submit");
     await settle();
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     doc.getElementById("new-experiment-action").fire("click");
     expect(form.querySelector("button").disabled).toBe(false);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(doc.getElementById("creation-exchange").hidden).toBe(true);
+    expect(doc.getElementById("creation-exchange").hidden).toBe(false);
     form.querySelector("button").dataset.challenge = "permanent_decline";
     form.fire("submit");
     await settle();
@@ -412,7 +533,7 @@ describe("experiment controller response ownership", () => {
       "scenario=permanent_decline",
     );
     expect(doc.getElementById("create-response-raw").textContent).toBe("");
-    expect(doc.getElementById("repeat-exchange").hidden).toBe(true);
+    expect(doc.getElementById("repeat-exchange").hidden).toBe(false);
   });
   it.each([
     { phase: "state", outcome: "failure" },
@@ -907,7 +1028,7 @@ describe("experiment controller response ownership", () => {
     expect(doc.getElementById("actual-amount").textContent).toBe("Unknown");
     expect(doc.getElementById("duplicate-proof").hidden).toBe(false);
     expect(doc.getElementById("before-repeats").textContent).toContain(
-      "Baseline before repeats: 500.00 USD",
+      "Baseline: 500.00 USD",
     );
     delivery.reject(new Error("network outcome unknown"));
     await settle();
@@ -1005,7 +1126,7 @@ describe("experiment controller response ownership", () => {
       );
     });
     mountExperiment(doc);
-    expect(doc.getElementById("main-result").hidden).toBe(true);
+    expect(doc.getElementById("main-result").hidden).toBe(false);
     expect(doc.getElementById("evidence-details").hidden).toBe(true);
     form.fire("submit");
     await settle();
@@ -1020,10 +1141,10 @@ describe("experiment controller response ownership", () => {
       "Repeat verification is incomplete.",
     );
     expect(doc.getElementById("batch-status").textContent).toContain(
-      "1 repeat deliveries attempted; 0 fulfilled",
+      "1 attempted · 0 fulfilled",
     );
     expect(doc.getElementById("batch-status").textContent).toContain(
-      "1 unknown; 0 failed; 9 not attempted",
+      "1 unknown · 0 failed · 9 skipped",
     );
     expect(doc.getElementById("demonstration-meaning").textContent).toContain(
       "repeat test remains unverified",
@@ -1053,7 +1174,7 @@ describe("experiment controller response ownership", () => {
     expect(
       requests.filter((request) => request.method === "POST"),
     ).toHaveLength(originalPosts);
-    expect(doc.getElementById("main-result").hidden).toBe(true);
+    expect(doc.getElementById("main-result").hidden).toBe(false);
     expect(doc.getElementById("evidence-details").hidden).toBe(true);
     expect(form.querySelector("button").disabled).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
@@ -1084,7 +1205,7 @@ describe("experiment controller response ownership", () => {
     mountExperiment(doc);
     startChallenge(doc);
     await settle();
-    expect(doc.getElementById("recovery-action").hidden).toBe(true);
+    expect(doc.getElementById("recovery-action").hidden).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
     expect(doc.getElementById("experiment-error").hidden).toBe(true);
     expect(doc.getElementById("attempt-count").textContent).toBe("—");
@@ -1255,7 +1376,7 @@ describe("experiment controller response ownership", () => {
     expect(doc.getElementById("backend-state-raw").textContent).toContain(
       "threshold of 50000",
     );
-    expect(doc.getElementById("recovery-action").hidden).toBe(true);
+    expect(doc.getElementById("recovery-action").hidden).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
   it("offers GET-only reconnect after a network failure and does not redeliver or start a new experiment", async () => {

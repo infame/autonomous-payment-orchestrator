@@ -427,7 +427,7 @@ describe("same-page experiment client", () => {
     expect(model.expected).toContain("23 operations");
     expect(model.observed).toContain("22 recorded operations");
     expect(model.observed).toContain(
-      "2 attempted, 1 fulfilled, 0 failed, 1 unknown, 1 not attempted",
+      "2 attempted, 1 fulfilled, 0 failed, 1 unknown, 1 skipped",
     );
     expect(model.provenance).toContain("not mapped to journal rows");
     expect(

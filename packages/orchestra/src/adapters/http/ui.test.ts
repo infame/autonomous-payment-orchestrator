@@ -170,9 +170,7 @@ describe("guided payment review", () => {
 
   it("shows only four mock challenges and a separate ordinary live request page", async () => {
     const mock = String(await renderHome("mock", null)).replace(/\s+/g, " ");
-    expect(
-      mock.match(/class="challenge-picker(?: primary-challenge)?"/g),
-    ).toHaveLength(4);
+    expect(mock.match(/class="challenge-picker[^"]*"/g)).toHaveLength(4);
     for (const removed of [
       "Manual tools",
       "Single exact resend",
@@ -188,26 +186,27 @@ describe("guided payment review", () => {
     expect(mock.indexOf("Recorded operations")).toBeLessThan(
       mock.indexOf("Simulated assistant proposal"),
     );
-    expect(mock).toContain('<details id="other-tests"');
-    expect(mock).toContain('<details id="evidence-details" hidden>');
-    expect(mock).toMatch(/id="main-result"\s+class="experiment-results"/);
+    expect(mock).toContain('data-utility-panel="other-tests"');
+    expect(mock).toMatch(/id="evidence-details"[^>]*hidden/);
+    expect(mock).toMatch(/id="main-result"\s+class="[^"]*experiment-results"/);
     expect(mock).toContain("APO is a payment prototype");
     expect(mock).toContain("independent policy decides");
     expect(mock).toContain("PostgreSQL, Inngest workflows and ledger");
     expect(mock).toContain('aria-label="Create payment request and response"');
     expect(mock).toContain("POST /ui/challenges");
     expect(mock).toContain("Returned acknowledgement fields");
-    expect(mock).toContain("Latest observed state");
-    expect(mock).toContain("Recorded request");
-    expect(mock).toContain("Mock assistant proposal");
-    expect(mock).toContain("Independent policy");
+    expect(mock).toContain("Observed result");
+    expect(mock).toContain('id="observed-source"');
+    expect(mock).toContain('id="observed-proposal"');
+    expect(mock).toContain('id="observed-policy"');
     expect(mock).toContain(
       'aria-label="Repeat operations request and response"',
     );
     expect(mock).toContain("Returned batch response fields");
-    expect(
-      mock.indexOf("No new instruction, model proposal, or workflow"),
-    ).toBeLessThan(mock.indexOf('id="repeat-action"'));
+    expect(mock).toContain(
+      "Reuse original keys for capture and ledger posting",
+    );
+    expect(mock).toContain("without a new charge, model proposal, or workflow");
     expect(mock).toContain("What this demonstrates");
     expect(mock).toContain(
       'href="https://infame.dev/projects/autonomous-payment-orchestrator"',
@@ -377,7 +376,7 @@ describe("evidence explanations", () => {
     expect(page).toContain('id="operation-raw-disclosure"');
     expect(page).toContain('id="receipt-raw-disclosure"');
     expect(page).toContain('id="case-mechanics"');
-    expect(page).toContain("Retry the same payment 10 times");
+    expect(page).toContain("Retry it 10 times");
   });
   it("keeps short facts inline while retaining long raw payload disclosures", async () => {
     const page = String(await renderHome("mock", null)).replace(/\s+/g, " ");

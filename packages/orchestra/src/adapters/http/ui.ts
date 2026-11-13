@@ -227,6 +227,75 @@ const STYLE = raw(`<style>
 #experiment .demonstration p{font-size:.95rem;max-width:70ch;margin-bottom:0}
 @media(max-width:700px){#experiment .exchange{grid-template-columns:1fr;gap:20px}#experiment .exchange-response{border-left:0;border-top:1px solid #e2e8f0;padding-left:0;padding-top:20px}#experiment #repeat-action-panel button{width:100%}}
 
+/* A permanent workspace: asynchronous reads update values, not the page structure. */
+.lab-page header,.lab-page main{max-width:1240px;padding-inline:20px}
+.lab-page header{padding-block:8px;min-height:40px;font-size:14px}
+.lab-page main{padding-block:8px 12px}
+.lab-page .banner{font-size:14px;line-height:1.35;margin:0 0 6px;padding:0}
+#experiment .lab-heading{margin:0 0 12px}
+#experiment h1{font-size:28px;line-height:1.15;margin:0 0 4px}
+#experiment .lab-heading p{max-width:none;font-size:14px;line-height:1.4;margin:0}
+#experiment .demo-workspace{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.15fr);gap:24px;align-items:stretch}
+#experiment .post-workspace{display:grid;grid-template-rows:minmax(190px,auto) minmax(210px,auto);align-content:start;gap:10px}
+#experiment .post-experience{border:1px solid #cbd5e1;border-radius:8px;padding:10px;min-width:0}
+#experiment .post-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;margin:0 0 6px}
+#experiment .post-heading h2,#experiment .observation-heading h2{font-size:16px;line-height:1.3;margin:0;max-width:22ch}
+#experiment button{border:1px solid transparent;min-height:44px;box-sizing:border-box;transition:none}
+#experiment .primary-challenge button,#experiment .primary-challenge button:disabled{border-width:1px;border-style:solid;min-height:44px;white-space:nowrap;font-size:14px;padding:8px 12px}
+#experiment .primary-challenge button{border-color:transparent}
+#experiment .primary-challenge button:disabled{border-color:#cbd5e1}
+#experiment #repeat-action{font-size:14px;padding:8px 12px;white-space:nowrap}
+#experiment #repeat-action-panel{margin:0;padding:10px;border:1px solid #cbd5e1}
+#experiment .repeat-mechanism{font-size:14px;line-height:1.35;margin:0 0 6px;min-height:38px}
+#experiment .exchange{display:block;padding:0;margin:0;border:0}
+#experiment .exchange-row{display:grid;grid-template-columns:68px minmax(0,1fr);gap:8px;align-items:start}
+#experiment .exchange-row+.exchange-row{margin-top:6px}
+#experiment .exchange h3{font-size:14px;line-height:1.4;margin:0;font-weight:600}
+#experiment .exchange p{font-size:14px;line-height:1.35;margin:0;max-width:none}
+#experiment .exchange code{font-size:14px;line-height:1.35;overflow-wrap:anywhere}
+#experiment .exchange-response{border:0;padding:0;min-height:62px}
+#experiment .reference-slot{min-height:19px;overflow-wrap:anywhere}
+#experiment #create-response-reference{font-size:14px;line-height:1.35}
+#experiment #create-request-meaning{min-height:19px}
+#experiment #repeat-next{min-height:19px}
+#experiment #batch-status{min-height:38px;margin:0;font-size:14px;line-height:1.35}
+#experiment .observation-workspace{border:1px solid #cbd5e1;border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+#experiment .observation-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:44px}
+#experiment .observation-heading .result-actions{display:flex;flex-wrap:nowrap;gap:6px;margin:0}
+#experiment .observation-heading button{font-size:14px;padding:8px 10px;white-space:nowrap}
+#experiment #recovery-action{min-width:143px}
+#experiment #new-experiment-action{min-width:132px}
+#experiment .observed-state{border:0;padding:0;margin:0}
+#experiment #observed-read-path{display:block;min-height:19px;font-size:14px;line-height:1.35;overflow-wrap:anywhere}
+#experiment .observed-state .observation-read-status{font-size:14px;line-height:1.35;min-height:19px;margin:4px 0 6px}
+#experiment .observed-fields{gap:6px;margin:0}
+#experiment .observed-fields>div{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;min-height:19px}
+#experiment .observed-fields dt,#experiment .observed-fields dd{font-size:14px;line-height:1.35;margin:0}
+#experiment .observed-fields dd{min-height:19px}
+#experiment .lab-verdict{border-radius:6px;padding:8px 10px;min-height:80px;position:relative}
+#experiment .lab-verdict h3{font-size:16px;line-height:1.3;min-height:21px;margin:0 0 3px}
+#experiment .result-payment{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;border:0;margin:0;padding:0;font-size:14px;line-height:1.35}
+#experiment .result-payment strong{font-size:18px;line-height:1.25}
+#experiment #actual-state{font-size:14px}
+#experiment .payment-reference-slot{min-height:21px;padding-top:2px}
+#experiment #payment-record-id{font-size:14px;line-height:1.35;margin:0;overflow-wrap:anywhere}
+#experiment #pending-label{position:absolute;right:12px;bottom:8px;font-size:14px}
+#experiment #pending-label:before{display:none}
+#experiment #duplicate-proof{margin:0;padding:0;border:0;min-height:58px;display:grid;grid-template-columns:1fr 1fr;column-gap:12px}
+#experiment #duplicate-proof h3,#experiment .demonstration h3{font-size:14px;line-height:1.3;margin:0 0 4px}
+#experiment #duplicate-proof p{font-size:14px;line-height:1.35;margin:0;min-height:19px}
+#experiment .demonstration{margin:0;min-height:56px}
+#experiment .demonstration p{font-size:14px;line-height:1.35;margin:0;max-width:none;min-height:38px}
+#experiment .utility-strip{display:flex;flex-wrap:wrap;align-items:center;gap:4px 18px;border-top:1px solid #cbd5e1;padding-top:6px;margin-top:10px;min-height:50px}
+#experiment .utility-strip .utility-button{background:transparent;color:#1d4ed8;font-size:14px;font-weight:500;padding:6px 0;border-radius:0}
+#experiment .utility-strip .demo-limits{font-size:14px;margin:0;color:#475569}#experiment .utility-strip a{font-size:14px;min-height:44px;display:inline-flex;align-items:center;text-underline-offset:3px}
+#experiment .utility-panel{border-top:1px solid #cbd5e1;margin-top:14px;padding-top:16px}
+#experiment .utility-panel h2{font-size:18px}
+#experiment .utility-panel pre{max-height:none;overflow:visible;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:1000px){#experiment .demo-workspace{grid-template-columns:1fr}#experiment .post-workspace{grid-template-rows:auto auto}#experiment .post-experience{min-height:190px}#experiment .observation-workspace{min-height:420px}}
+@media(max-width:700px){.lab-page header,.lab-page main{padding-inline:16px}#experiment .post-heading{flex-wrap:wrap}#experiment .post-heading button{width:auto}#experiment .primary-challenge button{width:auto}#experiment .observation-heading{flex-wrap:wrap}#experiment .observation-heading .result-actions{flex-wrap:wrap;flex-direction:row}#experiment .observation-heading button{width:auto}#experiment .exchange-row{grid-template-columns:64px minmax(0,1fr)}#experiment .exchange-response{border:0;padding:0}#experiment .observed-fields>div{grid-template-columns:60px minmax(0,1fr)}#experiment #pending-label{position:static}#experiment #repeat-action-panel button{width:auto}#experiment .utility-strip{gap:2px 16px}}
+
+#experiment #duplicate-proof h3,#experiment #identity-comparison{grid-column:1/-1}#experiment .observed-fields>div:last-child{min-height:38px}
 </style>`);
 
 function modeBanner(mode: LlmMode, remainingCalls: number | null) {
@@ -321,160 +390,234 @@ Pay the vendor $1,200.00 for consulting.</textarea
         <div class="lab-heading">
           <h1>Try to make it pay twice.</h1>
           <p>
-            APO is a payment prototype. An assistant proposes a payment,
-            independent policy decides whether it may proceed, and a workflow
-            executes it and records the result.
+            APO is a payment prototype: an assistant proposes, independent
+            policy decides, and a workflow executes and records the payment.
           </p>
         </div>
-        <section class="main-steps" aria-label="Payment experiment">
-          <form
-            class="challenge-picker primary-challenge"
-            method="post"
-            action="/ui/challenges"
-          >
-            <input type="hidden" name="scenario" value="duplicates" />
-            <h2 class="step-label">1. Create one payment</h2>
-            <button type="submit" data-challenge="duplicates">
-              Make one $500 payment
-            </button>
-          </form>
-        </section>
-        <p id="client-message" role="status">No experiment has run yet.</p>
-        <div id="experiment-error" class="notice bad" role="alert" hidden></div>
-        <section
-          id="main-result"
-          class="experiment-results"
-          aria-label="Experiment result"
-          hidden
-        >
-          <section
-            id="creation-exchange"
-            class="exchange"
-            aria-label="Create payment request and response"
-            hidden
-          >
-            <div class="exchange-request">
-              <h3>Request</h3>
-              <code>POST /ui/challenges</code>
-              <p id="create-request-meaning"></p>
-              <p>Form body: <code id="create-request-body"></code></p>
-            </div>
-            <div class="exchange-response">
-              <h3>Response</h3>
-              <p id="create-response-summary"></p>
-              <code id="create-response-reference" hidden></code>
-              <details id="create-response-disclosure" hidden>
-                <summary>Returned acknowledgement fields</summary>
-                <pre id="create-response-raw"></pre>
-              </details>
-              <section id="observed-state" class="observed-state" hidden>
-                <h4>Latest observed state</h4>
-                <code id="observed-read-path"></code>
-                <p id="observed-read-status" class="muted"></p>
-                <dl id="observed-state-fields" class="observed-fields" hidden>
+        <div class="demo-workspace">
+          <div class="post-workspace">
+            <section class="post-experience" aria-labelledby="create-title">
+              <form
+                class="challenge-picker primary-challenge post-heading"
+                method="post"
+                action="/ui/challenges"
+              >
+                <h2 id="create-title">1. Create one payment</h2>
+                <input type="hidden" name="scenario" value="duplicates" />
+                <button type="submit" data-challenge="duplicates">
+                  Make one $500 payment
+                </button>
+              </form>
+              <section
+                id="creation-exchange"
+                class="exchange"
+                aria-label="Create payment request and response"
+              >
+                <div class="exchange-row">
+                  <h3>Request</h3>
                   <div>
-                    <dt>Recorded request</dt>
-                    <dd id="observed-source"></dd>
+                    <p id="create-request-meaning">
+                      Preset: one simulated $500 payment instruction.
+                    </p>
+                    <code>POST /ui/challenges</code>
+                    <code id="create-request-body">scenario=duplicates</code>
                   </div>
+                </div>
+                <div class="exchange-row exchange-response">
+                  <h3>Response</h3>
                   <div>
-                    <dt>Mock assistant proposal</dt>
-                    <dd id="observed-proposal"></dd>
+                    <p id="create-response-summary">Not sent yet.</p>
+                    <div class="reference-slot">
+                      <code id="create-response-reference"></code>
+                    </div>
                   </div>
-                  <div>
-                    <dt>Independent policy</dt>
-                    <dd id="observed-policy"></dd>
-                  </div>
-                </dl>
+                </div>
               </section>
-            </div>
-          </section>
-          <section id="lab-verdict-panel" class="lab-verdict" role="status">
-            <h2 id="lab-verdict">Waiting for a result</h2>
-            <p id="lab-explanation"></p>
-            <div class="result-payment">
-              <span>Latest observed capture</span>
-              <strong id="actual-amount">Unknown</strong>
-              <p id="actual-state"></p>
-              <p id="payment-record-id" hidden></p>
-            </div>
-            <p id="pending-label" hidden>Waiting for backend confirmation</p>
-          </section>
-          <section id="repeat-action-panel" class="main-action" hidden>
-            <h2>2. Repeat the original operations</h2>
-            <p>
-              The original operation keys identify these requests as retries.
-              They should return the existing payment and accounting records
-              instead of creating another charge.
-            </p>
-            <p>
-              Repeat the original capture and ledger posting with the same
-              operation keys. No new instruction, model proposal, or workflow.
-            </p>
-            <p id="repeat-next">
-              Wait for the original payment to be confirmed.
-            </p>
-            <button id="repeat-action" type="button" disabled>
-              Retry the same payment 10 times
-            </button>
-          </section>
-          <section
-            id="repeat-exchange"
-            class="exchange"
-            aria-label="Repeat operations request and response"
-            hidden
-          >
-            <div class="exchange-request">
-              <h3>Request</h3>
-              <code id="repeat-request-path"></code>
-              <p>
-                Repeat capture and ledger posting for the original payment ten
-                times, using its original operation keys.
+            </section>
+            <section
+              id="repeat-action-panel"
+              class="post-experience"
+              aria-labelledby="repeat-title"
+            >
+              <div class="post-heading">
+                <h2 id="repeat-title">2. Repeat the same payment</h2>
+                <button id="repeat-action" type="button" disabled>
+                  Retry it 10 times
+                </button>
+              </div>
+              <p class="repeat-mechanism">
+                Reuse original keys for capture and ledger posting. These
+                retries should return existing records, without a new charge,
+                model proposal, or workflow.
               </p>
-              <p class="muted">
-                No new payment instruction, model proposal, or workflow is
-                created. This POST has no request body.
-              </p>
-            </div>
-            <div class="exchange-response">
-              <h3>Response</h3>
-              <p id="repeat-response-summary"></p>
-              <p id="batch-status"></p>
-              <details id="repeat-response-disclosure" hidden>
-                <summary>Returned batch response fields</summary>
-                <pre id="repeat-response-raw"></pre>
-              </details>
-            </div>
-          </section>
-          <section id="duplicate-proof" class="panel" hidden>
-            <h3>Before → after the ten retries</h3>
-            <p id="before-repeats"></p>
-            <p id="after-repeats"></p>
-            <p id="identity-comparison"></p>
-            <details>
-              <summary>Recorded baseline before retries</summary>
-              <pre id="baseline-raw">No baseline yet.</pre>
-            </details>
-          </section>
-          <section id="demonstration-panel" class="demonstration">
-            <h3>What this demonstrates</h3>
-            <p id="demonstration-meaning"></p>
-          </section>
-          <div class="result-actions">
-            <button id="recovery-action" type="button" class="secondary" hidden>
-              Refresh evidence
-            </button>
-            <button id="new-experiment-action" type="button" class="secondary">
-              Start a new experiment
-            </button>
+              <section
+                id="repeat-exchange"
+                class="exchange"
+                aria-label="Repeat operations request and response"
+              >
+                <div class="exchange-row">
+                  <h3>Request</h3>
+                  <div>
+                    <code id="repeat-request-path"
+                      >POST /api/intents/:id/redeliver</code
+                    >
+                    <p id="repeat-next">First confirm the original payment.</p>
+                  </div>
+                </div>
+                <div class="exchange-row exchange-response">
+                  <h3>Response</h3>
+                  <div>
+                    <p id="repeat-response-summary">Not sent yet.</p>
+                    <p id="batch-status"></p>
+                  </div>
+                </div>
+              </section>
+            </section>
           </div>
-          <p id="recovery-help" class="muted" hidden>
-            Reads the current state. Does not send another payment or repeat
-            request.
+          <section
+            id="main-result"
+            class="observation-workspace experiment-results"
+            aria-label="Experiment result"
+          >
+            <div class="observation-heading">
+              <h2>Observed result</h2>
+              <div class="result-actions">
+                <button
+                  id="recovery-action"
+                  type="button"
+                  class="secondary"
+                  disabled
+                >
+                  Refresh evidence</button
+                ><button
+                  id="new-experiment-action"
+                  type="button"
+                  class="secondary"
+                  disabled
+                >
+                  New experiment
+                </button>
+              </div>
+            </div>
+            <section id="observed-state" class="observed-state">
+              <code id="observed-read-path"
+                >GET /api/intents/:id + /evidence</code
+              >
+              <p
+                id="observed-read-status"
+                class="observation-read-status"
+                role="status"
+              >
+                No request has been sent.
+              </p>
+              <dl id="observed-state-fields" class="observed-fields">
+                <div>
+                  <dt>Request</dt>
+                  <dd id="observed-source">—</dd>
+                </div>
+                <div>
+                  <dt>Proposal</dt>
+                  <dd id="observed-proposal">—</dd>
+                </div>
+                <div>
+                  <dt>Policy</dt>
+                  <dd id="observed-policy">—</dd>
+                </div>
+              </dl>
+            </section>
+            <section id="lab-verdict-panel" class="lab-verdict" role="status">
+              <h3 id="lab-verdict">Ready for the first payment</h3>
+              <div class="result-payment">
+                <span>Captured</span><strong id="actual-amount">—</strong
+                ><span id="actual-state">No observation yet</span>
+              </div>
+              <div class="payment-reference-slot">
+                <p id="payment-record-id"></p>
+              </div>
+              <span id="pending-label" class="pending-label" hidden
+                >Reading confirmation…</span
+              >
+            </section>
+            <section id="duplicate-proof" class="proof-summary">
+              <h3>Before → after the ten retries</h3>
+              <p id="before-repeats">No baseline yet.</p>
+              <p id="after-repeats">Repeats not tested.</p>
+              <p id="identity-comparison">Ten matching receipts are needed.</p>
+            </section>
+            <section id="demonstration-panel" class="demonstration">
+              <h3>What this demonstrates</h3>
+              <p id="demonstration-meaning">
+                Run the two explicit steps to compare payment and ledger
+                identities.
+              </p>
+            </section>
+          </section>
+        </div>
+        <nav class="utility-strip" aria-label="Project tools and sources">
+          <button
+            type="button"
+            class="utility-button"
+            data-utility-panel="exchange-details"
+            aria-controls="exchange-details"
+            aria-expanded="false"
+          >
+            Request / response JSON
+          </button>
+          <button
+            type="button"
+            class="utility-button"
+            data-utility-panel="evidence-details"
+            aria-controls="evidence-details"
+            aria-expanded="false"
+          >
+            Inspect evidence
+          </button>
+          <button
+            type="button"
+            class="utility-button"
+            data-utility-panel="other-tests"
+            aria-controls="other-tests"
+            aria-expanded="false"
+          >
+            Other tests
+          </button>
+          <a href="https://infame.dev/projects/autonomous-payment-orchestrator"
+            >Case study</a
+          >
+          <a href="https://github.com/infame/autonomous-payment-orchestrator"
+            >Source</a
+          >
+          <a href="https://infame.dev/">Portfolio</a>
+          <span class="demo-limits"
+            >Sequential simulation; not a load test.</span
+          >
+        </nav>
+        <section id="exchange-details" class="utility-panel" hidden>
+          <h2>Request and response fields</h2>
+          <p>
+            Returned fields are projections of actual response bodies. GET
+            observations are separate from POST acknowledgements.
           </p>
-          <p id="read-status" role="status" hidden></p>
+          <section id="create-response-disclosure">
+            <h3>Returned acknowledgement fields</h3>
+            <pre id="create-response-raw"></pre>
+          </section>
+          <section id="repeat-response-disclosure">
+            <h3>Actual repeat request</h3>
+            <pre id="repeat-request-raw">No repeat request sent.</pre>
+            <h3>Returned batch response fields</h3>
+            <p>
+              Repeats capture and ledger posting with original keys; no new
+              instruction, model proposal, or workflow. This POST has no request
+              body.
+            </p>
+            <pre id="repeat-response-raw"></pre>
+          </section>
+          <h3>Recorded baseline before retries</h3>
+          <pre id="baseline-raw">No baseline yet.</pre>
         </section>
-        <details id="other-tests" class="other-tests">
-          <summary>Other tests</summary>
+        <section id="other-tests" class="utility-panel" hidden>
+          <h2>Other tests</h2>
           <p>Each test starts a new, isolated simulation.</p>
           <div class="lab-attacks">
             ${LAB_CHALLENGES.filter((c) => c.id !== "duplicates").map(
@@ -493,9 +636,23 @@ Pay the vendor $1,200.00 for consulting.</textarea
                 </form>`,
             )}
           </div>
-        </details>
-        <details id="evidence-details" hidden>
-          <summary>Inspect payment and ledger evidence</summary>
+        </section>
+        <section id="evidence-details" class="utility-panel" hidden>
+          <h2>Payment and ledger evidence</h2>
+          <p id="client-message" role="status">No experiment has run yet.</p>
+          <div
+            id="experiment-error"
+            class="notice bad"
+            role="alert"
+            hidden
+          ></div>
+          <p id="read-status" role="status" hidden></p>
+          <p id="recovery-help" class="muted">
+            Reads the current state. Does not send another payment or repeat
+            request.
+          </p>
+          <p id="lab-explanation"></p>
+
           <section
             class="case-plan"
             aria-label="Expected and observed experiment"
@@ -671,20 +828,7 @@ Pay the vendor $1,200.00 for consulting.</textarea
             Captured amount: pay-core. Recorded entries: ledger. Workflow:
             Inngest.
           </p>
-        </details>
-        <p class="demo-limits">
-          Ten sequential repeats against a simulated provider. This is not a
-          concurrent load test.
-        </p>
-        <nav class="portfolio-links" aria-label="About this project">
-          <a href="https://infame.dev/projects/autonomous-payment-orchestrator"
-            >Read the case study</a
-          >
-          <a href="https://github.com/infame/autonomous-payment-orchestrator"
-            >View source</a
-          >
-          <a href="https://infame.dev/">Viacheslav Anosov · Portfolio</a>
-        </nav>
+        </section>
         <noscript
           ><p>
             Initial payment submissions open a standalone result without
