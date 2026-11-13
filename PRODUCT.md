@@ -100,8 +100,8 @@ behavior demonstrated by these four scenarios without separate evidence.
 
 Historical test counts and deployment observations belong to their recorded
 revisions and environments; they are not standing claims about the current
-checkout. Hiring conversion, adoption, and performance benchmarks have not been
-established and must not be invented.
+checkout. No hiring-conversion, adoption, or performance benchmark evidence has
+been supplied for this record; future claims require a named source.
 
 ## Product Principles
 
